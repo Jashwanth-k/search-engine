@@ -1,12 +1,12 @@
 use lazy_static::lazy_static;
-use std::sync::{Arc, RwLock};
 use md5;
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone)]
 pub struct Node {
     url: String,
     pub hash: String,
-    meta_content: String,
+    pub meta_content: String,
     left: Box<Option<Node>>,
     right: Box<Option<Node>>,
 }
@@ -15,20 +15,28 @@ lazy_static! {
     static ref root: Arc<RwLock<Option<Node>>> = Arc::new(RwLock::new(Option::None));
 }
 
-pub mod main {  
+pub mod main {
     use super::*;
     pub fn index() {}
 
     pub fn get_hash(content: &str) -> String {
-        let hash = md5::compute(content).iter().map(|x| x.to_string()).collect();
+        let hash = md5::compute(content)
+            .iter()
+            .map(|x| x.to_string())
+            .collect();
         return hash;
     }
-    
+
     // fn re_index() {
 
     // }
 
-    fn insert_helper(node: &mut Option<Node>, url: &str, content: &str, meta_content: &str) -> Option<Node> {
+    fn insert_helper(
+        node: &mut Option<Node>,
+        url: &str,
+        content: &str,
+        meta_content: &str,
+    ) -> Option<Node> {
         if node.is_none() {
             let hash = get_hash(content);
             let new_node = Some(Node {
@@ -81,7 +89,7 @@ pub mod main {
             println!("root is updated");
             return;
         }
-        insert_helper( &mut root_ref, url, content, meta_content);
+        insert_helper(&mut root_ref, url, content, meta_content);
     }
 
     fn get_helper(node: &Option<Node>, url: &str) -> Option<Node> {

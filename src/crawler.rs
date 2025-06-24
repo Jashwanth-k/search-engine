@@ -1,3 +1,4 @@
+use crate::url_index;
 use reqwest::Client;
 use scraper::Html;
 use scraper::{ElementRef, Selector};
@@ -5,7 +6,6 @@ use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs;
-use crate::url_index;
 
 pub mod main {
     use super::*;
@@ -70,6 +70,9 @@ pub mod main {
     }
 
     async fn handle_url(url: &str, client: &Client) -> Result<Vec<String>, Box<dyn Error>> {
+        if !url.contains("http://") && !url.contains("https://") {
+            return Ok(vec![]);
+        }
         println!("started fetching url : {url}");
         let data = fetch_data(&url, &client).await?;
         let document = scraper::Html::parse_document(&data);
