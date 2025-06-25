@@ -1,5 +1,7 @@
 use lazy_static::lazy_static;
 use std::{collections::HashSet, sync::{Arc, RwLock}};
+use std::{env, fs, error::Error};
+use std::io::Write;
 
 pub struct Node {
     text: String,
@@ -15,7 +17,26 @@ lazy_static! {
 
 pub mod main {
     use super::*;
-    pub fn index() {}
+    pub fn index() -> Result<(), Box<dyn Error>>{
+        let filepath = &env::var("INVERTED_INDEX_FILE_PATH")?;
+        let file_data = fs::read_to_string(filepath)?;
+        let file_content: Vec<_> = file_data.lines().map(String::from).collect();
+        for content in file_content {
+            let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
+            let [url, content]: [&str; 2] = content_data[..2].try_into().unwrap();
+            println!("{url} {content}");
+            insert(url, content, false);
+        }
+        Ok(())
+    }
+
+    fn write_to_file(url: &str, content: &str) -> Result<(), Box<dyn Error>>{
+        let filepath = &env::var("INVERTED_INDEX_FILE_PATH")?;
+        let mut file_data = fs::OpenOptions::new().create(true).append(true).open(filepath)?;
+        let write_content = format!("{}$$==$$=$${}\n", url, content);
+        let _ = file_data.write(write_content.as_bytes());
+        Ok(())
+    }
 
     fn insert_helper(node: &mut Option<Node>, text: &str, url: &str) -> Option<Node> {
         if node.is_none() {
@@ -56,7 +77,10 @@ pub mod main {
         }
     }
 
-    pub fn insert(text: &str, url: &str) {
+    pub fn insert(text: &str, url: &str, write_file: bool) {
+        if write_file {
+            let _ = write_to_file(text, url);
+        }
         let text = &text.to_string().to_lowercase();
         println!("inverted_index insert triggered => text : {text}, url : {url}");
         let mut root_ref = root.write().unwrap();

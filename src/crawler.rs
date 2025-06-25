@@ -1,18 +1,20 @@
 use crate::url_index;
 use reqwest::Client;
 use scraper::Html;
-use scraper::{ElementRef, Selector};
+use scraper::{Selector};
 use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs;
+use chrono;
 
 pub mod main {
     use super::*;
     fn get_seed_file() -> Result<Vec<String>, Box<dyn Error>> {
         let filepath = &env::var("SEED_URLS_FILE_PATH")?;
-        let filedata = fs::read_to_string(filepath)?;
-        let seed_urls = filedata.lines().map(String::from).collect();
+        let file_data = fs::OpenOptions::new().create(true).write(true).open(filepath)?;
+        let file_data = fs::read_to_string(filepath)?;
+        let seed_urls = file_data.lines().map(String::from).collect();
         return Ok(seed_urls);
     }
 
@@ -73,6 +75,19 @@ pub mod main {
         if !url.contains("http://") && !url.contains("https://") {
             return Ok(vec![]);
         }
+        let url_node = url_index::main::get_by_url(url);
+        if url_node.is_some() {
+            let url_timestamp = url_node.as_ref().unwrap().timestamp;
+            let curr_timestamp = chrono::Utc::now();
+            let date_diff_days = (curr_timestamp - url_timestamp).num_days();
+            let req_date_diff = &env::var("CRAWL_DATE_DIFF_FOR_UPDATE")
+                .unwrap_or(String::from("3"))
+                .parse::<i64>()
+                .unwrap();
+            if date_diff_days < *req_date_diff {
+                return Ok(vec![]);
+            }
+        }
         println!("started fetching url : {url}");
         let data = fetch_data(&url, &client).await?;
         let document = scraper::Html::parse_document(&data);
@@ -80,7 +95,6 @@ pub mod main {
         let content = get_content(&document)?;
         let meta_description: String = get_meta_description(&document)?;
         println!("body parsed for url : {url}");
-        let url_node = url_index::main::get_by_url(url);
         let mut index_content = true;
         match url_node {
             Some(node) => {
@@ -93,9 +107,9 @@ pub mod main {
             None => (),
         }
         if index_content {
-            url_index::main::insert(url, &content, &meta_description);
+            url_index::main::insert(url, &content, &meta_description, true);
             for word in content.split_whitespace() {
-                crate::inverted_index::main::insert(word, url);
+                crate::inverted_index::main::insert(word, url, true);
             }
         }
         Ok(urls)

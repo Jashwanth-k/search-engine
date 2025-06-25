@@ -1,4 +1,3 @@
-use axum::response::IntoResponse;
 use axum::{
     Router,
     extract::{Json, Path},
@@ -26,8 +25,8 @@ struct ApiResp {
 }
 
 #[axum::debug_handler]
-async fn get_pages_by_search_text(Path(searchText): Path<String>) -> Json<ApiResp> {
-    let url_resp = inverted_index::main::get_by_text(&searchText);
+async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiResp> {
+    let url_resp = inverted_index::main::get_by_text(&search_text);
     match url_resp {
         None => {
             let data = ApiResp {
@@ -64,27 +63,21 @@ async fn get_pages_by_search_text(Path(searchText): Path<String>) -> Json<ApiRes
 
 async fn init() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
-    let handle = thread::spawn(|| {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            crawler::main::init().await;
-        });
+    let handle = thread::spawn(|| async {
+        let app = Router::new().route("/search/{search_text}", routing::get(get_pages_by_search_text));
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+        axum::serve(listener, app).await.unwrap();
     });
-    inverted_index::main::insert("abc", "https://microsoft.com");
-    inverted_index::main::insert("jlsd", "https://microsoft.com");
-    inverted_index::main::insert("sdk", "https://google.com");
-    inverted_index::main::insert("sdk", "https://gemini.google.com");
-    inverted_index::main::insert("jlsd", "https://teams.microsoft.com");
-    let result = inverted_index::main::get_by_text("sdk");
-    println!("index result : {:?}", result);
-    let result = inverted_index::main::get_by_text("jlsd");
-    println!("index result : {:?}", result);
-    // tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-    // handle.join().unwrap();
-    let app = Router::new().route("/search/{search_text}", routing::get(get_pages_by_search_text));
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let _ = thread::spawn(|| {
+        let _ = inverted_index::main::index();
+        let _ = url_index::main::index();
+        // let runtime = tokio::runtime::Runtime::new().unwrap();
+        // runtime.block_on(async {
+        //    crawler::main::init().await;
+        // });
+    });
+    // tokio::task::spawn(crawler::main::init().await);
+    let data = handle.join().unwrap();
     Ok(())
 }
 
