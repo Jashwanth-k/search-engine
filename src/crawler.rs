@@ -1,18 +1,27 @@
 use crate::url_index;
+use chrono;
 use reqwest::Client;
 use scraper::Html;
-use scraper::{Selector};
+use scraper::Selector;
 use std::collections::HashSet;
 use std::env;
 use std::error::Error;
 use std::fs;
-use chrono;
+
+#[derive(Debug)]
+struct UrlResp {
+    urls: Vec<String>,
+    is_fetched: bool,
+}
 
 pub mod main {
     use super::*;
     fn get_seed_file() -> Result<Vec<String>, Box<dyn Error>> {
         let filepath = &env::var("SEED_URLS_FILE_PATH")?;
-        let file_data = fs::OpenOptions::new().create(true).write(true).open(filepath)?;
+        let file_data = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .open(filepath)?;
         let file_data = fs::read_to_string(filepath)?;
         let seed_urls = file_data.lines().map(String::from).collect();
         return Ok(seed_urls);
@@ -71,12 +80,15 @@ pub mod main {
         Ok(content)
     }
 
-    async fn handle_url(url: &str, client: &Client) -> Result<Vec<String>, Box<dyn Error>> {
+    async fn handle_url(url: &str, client: &Client, force_fetch: bool) -> Result<UrlResp, Box<dyn Error + Send>> {
         if !url.contains("http://") && !url.contains("https://") {
-            return Ok(vec![]);
+            return Ok(UrlResp {
+                urls: vec![],
+                is_fetched: false
+            });
         }
         let url_node = url_index::main::get_by_url(url);
-        if url_node.is_some() {
+        if url_node.is_some() && force_fetch == false {
             let url_timestamp = url_node.as_ref().unwrap().timestamp;
             let curr_timestamp = chrono::Utc::now();
             let date_diff_days = (curr_timestamp - url_timestamp).num_days();
@@ -85,15 +97,18 @@ pub mod main {
                 .parse::<i64>()
                 .unwrap();
             if date_diff_days < *req_date_diff {
-                return Ok(vec![]);
+                return Ok(UrlResp {
+                    urls: vec![],
+                    is_fetched: false
+                });
             }
         }
         println!("started fetching url : {url}");
-        let data = fetch_data(&url, &client).await?;
+        let data = fetch_data(&url, &client).await.unwrap();
         let document = scraper::Html::parse_document(&data);
-        let urls = get_urls(&document)?;
-        let content = get_content(&document)?;
-        let meta_description: String = get_meta_description(&document)?;
+        let urls = get_urls(&document).unwrap();
+        let content = get_content(&document).unwrap();
+        let meta_description: String = get_meta_description(&document).unwrap();
         println!("body parsed for url : {url}");
         let mut index_content = true;
         match url_node {
@@ -103,36 +118,46 @@ pub mod main {
                 if curr_hash == content_hash {
                     index_content = false;
                 }
-            },
+            }
             None => (),
         }
         if index_content {
-            url_index::main::insert(url, &content, &meta_description, true);
-            for word in content.split_whitespace() {
-                crate::inverted_index::main::insert(word, url, true);
-            }
+            url_index::main::insert(url, &content, &meta_description);
+            crate::inverted_index::main::insert_by_content(url, &content);
         }
-        Ok(urls)
+        Ok(UrlResp {
+            urls: urls,
+            is_fetched: true
+        })
     }
 
     async fn handle_urls(
         urls: Vec<String>,
         client: &Client,
         depth: u8,
-    ) -> Result<(), Box<dyn Error>> {
+        force_fetch: bool,
+    ) -> Result<u64, Box<dyn Error + Send>> {
         if depth == 0 {
-            return Ok(());
+            return Ok(0);
         }
+        let mut pages = 0;
         for url in urls {
-            let handled_resp = handle_url(&url, &client).await;
+            let handled_resp = handle_url(&url, &client, force_fetch).await;
             if handled_resp.is_err() {
                 println!("error in handling url : {url}, error : {:?}", handled_resp);
                 continue;
             }
-            let handled_resp = handled_resp.unwrap();
-            Box::pin(handle_urls(handled_resp, client, depth - 1)).await;
+            let UrlResp {urls, is_fetched } = handled_resp.unwrap();
+            if is_fetched == true {
+                pages += 1
+            }
+            let next_res = Box::pin(handle_urls(urls, client, depth - 1, force_fetch)).await;
+            match next_res {
+                Ok(pages_fetched) => pages += pages_fetched,
+                Err(_) => ()
+            }
         }
-        Ok(())
+        Ok(pages)
     }
 
     pub async fn init() {
@@ -146,9 +171,22 @@ pub mod main {
         }
         let seed_urls = seed_urls.unwrap_or(vec![]);
         let client = Client::new();
-        let handle_resp = handle_urls(seed_urls, &client, *crawl_depth).await;
+        let handle_resp = handle_urls(seed_urls, &client, *crawl_depth, false).await;
         if handle_resp.is_err() {
             panic!("error in handling seed urls : {:?}", handle_resp);
         }
+    }
+
+    pub async fn handle_url_req(url: String) -> Result<u64, Box <dyn Error + Send + Sync>> {
+        let crawl_depth = &env::var("CRAWL_DEPTH")
+            .unwrap_or(String::from("10"))
+            .parse::<u8>()
+            .unwrap();
+        let client = Client::new();
+        let pages_processed = handle_urls(Vec::from([url.to_string()]), &client, *crawl_depth, true).await.unwrap();
+        if pages_processed == 0 {
+            return Err("no pages found to index".into());
+        }
+        Ok(pages_processed)
     }
 }

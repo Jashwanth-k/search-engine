@@ -1,10 +1,10 @@
+use chrono::{self, DateTime, Utc};
 use lazy_static::lazy_static;
 use md5;
-use std::sync::{Arc, RwLock};
-use chrono::{self, DateTime, Utc};
-use std::{env, fs};
 use std::error::Error;
 use std::io::Write;
+use std::sync::{Arc, RwLock};
+use std::{env, fs};
 
 #[derive(Clone)]
 pub struct Node {
@@ -22,21 +22,24 @@ lazy_static! {
 
 pub mod main {
     use super::*;
-    pub fn index() -> Result<(), Box<dyn Error>>{
+    pub fn index() -> Result<(), Box<dyn Error>> {
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
         let file_data = fs::read_to_string(filepath)?;
         let file_content: Vec<_> = file_data.lines().map(String::from).collect();
         for content in file_content {
             let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
             let [url, content, meta_content]: [&str; 3] = content_data[..3].try_into().unwrap();
-            insert(url, content, meta_content, false);
+            insert(url, content, meta_content);
         }
         Ok(())
     }
 
-    fn write_to_file(url: &str, content: &str, meta_content: &str) -> Result<(), Box<dyn Error>>{
+    fn write_to_file(url: &str, content: &str, meta_content: &str) -> Result<(), Box<dyn Error>> {
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
-        let mut file_data = fs::OpenOptions::new().create(true).append(true).open(filepath)?;
+        let mut file_data = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(filepath)?;
         let write_content = format!("{}$$==$$=$${}$$==$$=$${}\n", url, content, meta_content);
         let _ = file_data.write(write_content.as_bytes());
         Ok(())
@@ -95,10 +98,7 @@ pub mod main {
         }
     }
 
-    pub fn insert(url: &str, content: &str, meta_content: &str, write_file: bool) {
-        if write_file == true {
-            let _ = write_to_file(url, content, meta_content);
-        }
+    pub fn insert(url: &str, content: &str, meta_content: &str) {
         println!("url_index insert triggered => text : {url}");
         let mut root_ref = root.write().unwrap();
         if root_ref.is_none() {

@@ -3,3 +3,4 @@
 Cargo.lock
 /data/inverted_index.txt
 /data/url_index.txt
+.env
