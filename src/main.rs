@@ -1,10 +1,13 @@
 use axum::{
-     extract::{Json, Path}, routing, Router, response::Html,
+    Router,
+    extract::{Json, Path},
+    response::Html,
+    routing,
 };
 use dotenv;
 use serde::{Deserialize, Serialize};
-use std::collections::BinaryHeap;
-use std::{error::Error, thread, fs, env};
+use std::{collections::BinaryHeap, time::Duration};
+use std::{env, error::Error, fs, thread};
 use tokio;
 
 mod crawler;
@@ -26,7 +29,6 @@ struct ApiRespSearch {
 #[derive(Serialize, Deserialize)]
 struct ApiRespIndex {
     msg: String,
-    pages_index: u64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -37,21 +39,19 @@ struct IndexPayload {
 #[axum::debug_handler]
 async fn crawl_index_url(Json(payload): Json<IndexPayload>) -> Json<ApiRespIndex> {
     let url = payload.url;
-    let resp= crawler::main::handle_url_req(url).await;
-    match resp {
-        Ok(pages) => Json(ApiRespIndex {
-            msg: "pages indexed successfully".to_string(),
-            pages_index: pages,
-        }),
-        Err(err) => {
-            Json(ApiRespIndex {
-                msg: err.to_string(),
-                pages_index: 0,
-            })
-        }
-    }
+    let resp = crawler::main::handle_url_req(url).await;
+    Json(ApiRespIndex {
+        msg: "pages indexing finished".to_string(),
+    })
+    // match resp {
+    //     Ok(pages) => Json(ApiRespIndex {
+    //         msg: "pages indexed successfully".to_string()
+    //     }),
+    //     Err(err) => Json(ApiRespIndex {
+    //         msg: err.to_string()
+    //     }),
+    // }
 }
-
 #[axum::debug_handler]
 async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRespSearch> {
     let top_k = 10;
@@ -109,44 +109,48 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
 #[tokio::main]
 async fn init() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
-    // let thread1 = thread::spawn(|| async {
-    // let app = Router::new().route("/search/{search_text}", routing::get(get_pages_by_search_text));
-    // let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    // axum::serve(listener, app).await.unwrap();
-    // });
-    // let thread2 = thread::spawn(|| {
-    //     let _ = inverted_index::main::index();
-    //     let _ = url_index::main::index();
-    //     let runtime = tokio::runtime::Runtime::new().unwrap();
-    //     runtime.block_on(async {
-    //         crawler::main::init().await;
-    //     });
-    // });
-
+    thread::spawn(|| {
+        let inverted_index_thread = thread::spawn(|| {
+            let _ = inverted_index::main::index();
+        });
+        let url_index_thread = thread::spawn(|| {
+            let _ = url_index::main::index();
+        });
+        let _ = inverted_index_thread.join().unwrap();
+        let _ = url_index_thread.join().unwrap();
+        let _ = thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(30 * 30));
+                url_index::main::write_to_file();
+            }
+        });
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            loop {
+                let _ = crawler::main::init().await;
+            }
+        });
+    });
     let app = Router::new()
         .route(
             "/search/{search_text}",
             routing::get(get_pages_by_search_text),
         )
-        .route(
-            "/index",
-            routing::post(crawl_index_url),
-        )
-        .route(
-            "/home",
-            routing::get(get_homepage),
-        );
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    axum::serve(listener, app).await.unwrap();
-    // let data = thread2.join().unwrap();
+        .route("/index", routing::post(crawl_index_url))
+        .route("/home", routing::get(get_homepage));
+    let tcp_thread = thread::spawn(|| async {
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+        axum::serve(listener, app).await.unwrap()
+    });
+    let _ = tcp_thread.join().unwrap().await;
     Ok(())
 }
 
 fn main() {
     let result = init();
-    // if result.is_err() {
-    //     println!("error in main init : {:?}", result);
-    // }
+    if result.is_err() {
+        println!("error in main init : {:?}", result);
+    }
 }
 
 // Homepage
@@ -193,12 +197,12 @@ async fn get_homepage() -> Html<String> {
     "#;
     let filepath = &env::var("HOMEPAGE_FILE_PATH");
     if filepath.is_err() {
-        return Html(error_page.to_string())
+        return Html(error_page.to_string());
     }
     let filepath = filepath.as_ref().unwrap();
     let file_data = fs::read_to_string(filepath);
     if file_data.is_err() {
-        return Html(error_page.to_string())
+        return Html(error_page.to_string());
     }
     let file_data = file_data.unwrap();
     Html(file_data.to_string())

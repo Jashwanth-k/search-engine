@@ -2,6 +2,7 @@ use chrono::{self, DateTime, Utc};
 use lazy_static::lazy_static;
 use md5;
 use std::error::Error;
+use std::fs::File;
 use std::io::Write;
 use std::sync::{Arc, RwLock};
 use std::{env, fs};
@@ -11,6 +12,7 @@ pub struct Node {
     url: String,
     pub hash: String,
     pub meta_content: String,
+    content: String,
     left: Box<Option<Node>>,
     right: Box<Option<Node>>,
     pub timestamp: DateTime<Utc>,
@@ -34,14 +36,30 @@ pub mod main {
         Ok(())
     }
 
-    fn write_to_file(url: &str, content: &str, meta_content: &str) -> Result<(), Box<dyn Error>> {
-        let filepath = &env::var("URL_INDEX_FILE_PATH")?;
-        let mut file_data = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(filepath)?;
+    fn traverse_and_write(
+        node: &Option<Node>,
+        mut file: &File,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        if node.is_none() {
+            return Ok(());
+        }
+        let node = node.as_ref().unwrap();
+        let url = &node.url;
+        let content = &node.content;
+        let meta_content = &node.meta_content;
         let write_content = format!("{}$$==$$=$${}$$==$$=$${}\n", url, content, meta_content);
-        let _ = file_data.write(write_content.as_bytes());
+        let _ = file.write(write_content.as_bytes());
+        traverse_and_write(&node.right, &file);
+        traverse_and_write(&node.left, &file);
+        Ok(())
+    }
+
+    pub fn write_to_file() -> Result<(), Box<dyn Error + Send + Sync>> {
+        let filepath = &env::var("URL_INDEX_FILE_PATH")?;
+        let file_data = File::create(filepath)?;
+        let root_clone = root.clone();
+        let root_ref = root_clone.read().unwrap();
+        traverse_and_write(&root_ref, &file_data);
         Ok(())
     }
 
@@ -64,6 +82,7 @@ pub mod main {
             let new_node = Some(Node {
                 url: String::from(url),
                 hash: hash,
+                content: String::from(content),
                 meta_content: String::from(meta_content),
                 left: Box::new(Option::None),
                 right: Box::new(Option::None),
@@ -99,13 +118,14 @@ pub mod main {
     }
 
     pub fn insert(url: &str, content: &str, meta_content: &str) {
-        println!("url_index insert triggered => text : {url}");
+        println!("url_index insert triggered => url : {url}");
         let mut root_ref = root.write().unwrap();
         if root_ref.is_none() {
             let hash = get_hash(content);
             *root_ref = Some(Node {
                 url: String::from(url),
                 hash: hash,
+                content: String::from(content),
                 meta_content: String::from(meta_content),
                 left: Box::new(Option::None),
                 right: Box::new(Option::None),

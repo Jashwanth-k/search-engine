@@ -16,7 +16,7 @@ struct UrlResp {
 
 pub mod main {
     use super::*;
-    fn get_seed_file() -> Result<Vec<String>, Box<dyn Error>> {
+    fn get_seed_file() -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let filepath = &env::var("SEED_URLS_FILE_PATH")?;
         let file_data = fs::OpenOptions::new()
             .create(true)
@@ -80,11 +80,15 @@ pub mod main {
         Ok(content)
     }
 
-    async fn handle_url(url: &str, client: &Client, force_fetch: bool) -> Result<UrlResp, Box<dyn Error + Send>> {
+    async fn handle_url(
+        url: &str,
+        client: &Client,
+        force_fetch: bool,
+    ) -> Result<UrlResp, Box<dyn Error + Send>> {
         if !url.contains("http://") && !url.contains("https://") {
             return Ok(UrlResp {
                 urls: vec![],
-                is_fetched: false
+                is_fetched: false,
             });
         }
         let url_node = url_index::main::get_by_url(url);
@@ -99,12 +103,12 @@ pub mod main {
             if date_diff_days < *req_date_diff {
                 return Ok(UrlResp {
                     urls: vec![],
-                    is_fetched: false
+                    is_fetched: false,
                 });
             }
         }
         println!("started fetching url : {url}");
-        let data = fetch_data(&url, &client).await.unwrap();
+        let data = fetch_data(&url, &client).await.map_err(Into::into)?;
         let document = scraper::Html::parse_document(&data);
         let urls = get_urls(&document).unwrap();
         let content = get_content(&document).unwrap();
@@ -127,7 +131,7 @@ pub mod main {
         }
         Ok(UrlResp {
             urls: urls,
-            is_fetched: true
+            is_fetched: true,
         })
     }
 
@@ -136,31 +140,28 @@ pub mod main {
         client: &Client,
         depth: u8,
         force_fetch: bool,
-    ) -> Result<u64, Box<dyn Error + Send>> {
+    ) -> Result<bool, Box<dyn Error + Send>> {
         if depth == 0 {
-            return Ok(0);
+            return Ok(false);
         }
-        let mut pages = 0;
+        let is_fetched = false;
         for url in urls {
             let handled_resp = handle_url(&url, &client, force_fetch).await;
             if handled_resp.is_err() {
                 println!("error in handling url : {url}, error : {:?}", handled_resp);
                 continue;
             }
-            let UrlResp {urls, is_fetched } = handled_resp.unwrap();
-            if is_fetched == true {
-                pages += 1
-            }
+            let UrlResp { urls, is_fetched } = handled_resp.unwrap();
             let next_res = Box::pin(handle_urls(urls, client, depth - 1, force_fetch)).await;
             match next_res {
-                Ok(pages_fetched) => pages += pages_fetched,
-                Err(_) => ()
-            }
+                Ok(next_fetched) => is_fetched || next_fetched,
+                Err(_) => false,
+            };
         }
-        Ok(pages)
+        Ok(is_fetched)
     }
 
-    pub async fn init() {
+    pub async fn init() -> Result<(), Box<dyn Error + Send>> {
         let seed_urls = get_seed_file();
         let crawl_depth = &env::var("CRAWL_DEPTH")
             .unwrap_or(String::from("10"))
@@ -173,20 +174,22 @@ pub mod main {
         let client = Client::new();
         let handle_resp = handle_urls(seed_urls, &client, *crawl_depth, false).await;
         if handle_resp.is_err() {
-            panic!("error in handling seed urls : {:?}", handle_resp);
+            println!("error in handling seed urls : {:?}", handle_resp);
         }
+        Ok(())
     }
 
-    pub async fn handle_url_req(url: String) -> Result<u64, Box <dyn Error + Send + Sync>> {
+    pub async fn handle_url_req(url: String) -> Result<(), Box<dyn Error + Send + Sync>> {
         let crawl_depth = &env::var("CRAWL_DEPTH")
             .unwrap_or(String::from("10"))
             .parse::<u8>()
             .unwrap();
         let client = Client::new();
-        let pages_processed = handle_urls(Vec::from([url.to_string()]), &client, *crawl_depth, true).await.unwrap();
-        if pages_processed == 0 {
-            return Err("no pages found to index".into());
-        }
-        Ok(pages_processed)
+        let pages_processed =
+            handle_urls(Vec::from([url.to_string()]), &client, *crawl_depth, true)
+                .await
+                .unwrap();
+        println!("url processed resp url: {url}, status: {pages_processed}");
+        Ok(())
     }
 }
