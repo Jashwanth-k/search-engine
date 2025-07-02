@@ -13,6 +13,7 @@
           Helvetica, Arial, sans-serif;
         margin: 0;
         background-color: #fff;
+        color: #202124;
       }
 
       /* --- Main Containers & Layout --- */
@@ -38,8 +39,9 @@
         flex-grow: 0;
         flex-direction: row;
         justify-content: flex-start;
-        background-color: #f8f9fa;
-        border-bottom: 1px solid #dadce0;
+        align-items: center; /* Vertically align items */
+        background-color: #fff;
+        border-bottom: 1px solid #dfe1e5;
         padding: 15px 20px;
       }
 
@@ -66,11 +68,12 @@
         max-width: 580px;
         border: 1px solid #dfe1e5;
         border-radius: 24px;
-        box-shadow: 0 1px 6px rgba(32, 33, 36, 0.1);
+        box-shadow: none;
+        transition: box-shadow 0.2s ease;
       }
       .search-box:hover,
       .search-box:focus-within {
-        box-shadow: 0 2px 8px rgba(32, 33, 36, 0.2);
+        box-shadow: 0 1px 6px rgba(32, 33, 36, 0.28);
       }
       #search-input {
         flex-grow: 1;
@@ -90,20 +93,25 @@
         cursor: pointer;
         border-top-right-radius: 24px;
         border-bottom-right-radius: 24px;
+        transition: background-color 0.2s ease;
+      }
+      #search-button:hover {
+        background-color: #3367d6;
       }
 
       /* --- Results Section --- */
       #results-container {
-        padding: 20px;
+        /* Initially hidden */
+        padding: 0;
         max-width: 600px;
         margin: 0 auto;
       }
 
-      /* MODIFIED: New rule to improve layout on the results page */
+      /* REVISED: Rule to create a Google-like results column on desktop */
       body.results-active #results-container {
-        max-width: none; /* Allow the container to use available width */
-        margin: 0; /* Remove centering to align left */
-        padding: 20px 40px; /* Add comfortable padding for a clean look */
+        padding: 20px;
+        /* Use margin to create the offset column effect, aligning with the header */
+        margin-left: 180px;
       }
 
       .result-item {
@@ -147,18 +155,17 @@
         padding: 8px 16px;
         font-size: 14px;
         font-weight: 500;
-        color: #4285f4;
-        background-color: #fff;
-        border: 1px solid #dadce0;
+        color: #3c4043;
+        background-color: #f8f9fa;
+        border: 1px solid #f8f9fa;
         border-radius: 4px;
         cursor: pointer;
-        transition: opacity 0.3s, visibility 0.3s;
+        transition: all 0.2s ease;
       }
       #open-modal-button:hover {
-        background-color: #f8f9fa;
+        border-color: #dadce0;
+        box-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
       }
-
-      /* HIDE the submit button when results are active */
       body.results-active #open-modal-button {
         display: none;
       }
@@ -211,6 +218,7 @@
         display: block;
         margin-bottom: 8px;
         font-weight: 500;
+        color: #3c4043;
       }
       .modal-body input {
         width: 100%;
@@ -232,6 +240,10 @@
         cursor: pointer;
         background-color: #4285f4;
         color: white;
+      }
+      .modal-footer button:disabled {
+        background-color: #9ac2fc;
+        cursor: not-allowed;
       }
       body.modal-open .modal,
       body.modal-open .modal-overlay {
@@ -256,6 +268,37 @@
         background-color: #f8d7da;
         color: #721c24;
         border-color: #f5c6cb;
+      }
+
+      /* --- NEW: Responsive Design --- */
+      @media (max-width: 768px) {
+        /* Adjustments for the results page header on smaller screens */
+        body.results-active #search-header {
+          flex-wrap: wrap; /* Allow items to wrap */
+          gap: 15px; /* Add space between logo and search box when they wrap */
+          padding: 15px;
+        }
+
+        body.results-active .logo {
+          margin-right: 0; /* Remove right margin when wrapping */
+        }
+
+        /* Make search box take full width on small screens in results view */
+        body.results-active .search-box {
+          width: 100%;
+        }
+
+        /* Simplify results container layout for mobile */
+        body.results-active #results-container {
+          /* On mobile, results should be a simple list with side padding */
+          padding: 20px 15px;
+          margin-left: 0; /* Remove the desktop-specific margin */
+        }
+
+        /* Adjust main page logo size on very small screens */
+        .logo {
+          font-size: clamp(2.5rem, 12vw, 4rem);
+        }
       }
     </style>
   </head>
@@ -334,6 +377,7 @@
           }
         });
 
+        // --- Search Functionality ---
         async function handleSearch() {
           const query = searchInput.value.trim();
           if (!query) return;
@@ -347,7 +391,7 @@
             displayResults(apiResponse.data);
           } catch (error) {
             console.error("Search failed:", error);
-            resultsContainer.innerHTML = `<div class="message-box error">Search failed: ${error.message}. Is the server running?</div>`;
+            resultsContainer.innerHTML = `<div class="result-item"><div class="message-box error">Search failed: ${error.message}. Is the API server running?</div></div>`;
           }
         }
 
@@ -375,26 +419,29 @@
             const description =
               item.meta_content || "No description available for this page.";
 
-            // MODIFIED: Removed target="_blank" to open links in the same tab.
             resultElement.innerHTML = `
-                        <h3><a href="${item.url}">${title}</a></h3>
-                        <div class="url">${item.url}</div>
-                        <p class="meta-content">${description}</p>
-                    `;
+                <h3><a href="${item.url}">${title}</a></h3>
+                <div class="url">${item.url}</div>
+                <p class="meta-content">${description}</p>
+            `;
             resultsContainer.appendChild(resultElement);
           });
         }
 
+        // --- Modal Functionality ---
         function openModal() {
           body.classList.add("modal-open");
           urlInput.value = "";
-          modalStatus.style.display = "none";
+          urlInput.focus();
+          hideModalStatus();
+          submitUrlButton.disabled = false;
         }
 
         function closeModal() {
           body.classList.remove("modal-open");
         }
 
+        // --- REVISED: URL Submission with Better User Feedback ---
         async function handleUrlSubmit(event) {
           event.preventDefault();
           const urlToSubmit = urlInput.value.trim();
@@ -407,7 +454,7 @@
             return;
           }
 
-          hideModalStatus();
+          showModalStatus("Submitting...", "success"); // Initial feedback
           submitUrlButton.disabled = true;
 
           try {
@@ -420,21 +467,21 @@
             const result = await response.json();
 
             if (!response.ok) {
+              // Handle server-side validation errors or other issues
               throw new Error(result.msg || `Server error: ${response.status}`);
             }
 
-            let successMessage = result.msg;
-            if (result.pages_index && result.pages_index > 0) {
-              successMessage += ` (${result.pages_index} new pages indexed)`;
-            }
-            showModalStatus(successMessage, "success");
-            urlInput.value = "";
+            // On success, show a final message and close the modal after a delay
+            showModalStatus("Indexing has started.", "success");
+            setTimeout(closeModal, 2500); // Auto-close after 2.5 seconds
           } catch (error) {
             console.error("URL submission failed:", error);
+            // On failure, show the error and keep the modal open
             showModalStatus(`Submission failed: ${error.message}`, "error");
-          } finally {
-            submitUrlButton.disabled = false;
+            submitUrlButton.disabled = false; // Re-enable button on failure
           }
+          // Note: The 'finally' block is not needed because the button is re-enabled only on error.
+          // On success, the modal closes, so the button state doesn't matter.
         }
 
         function showModalStatus(message, type) {
@@ -447,16 +494,16 @@
           modalStatus.style.display = "none";
         }
 
+        // --- Utility Functions ---
         function getTitleFromUrl(url) {
           try {
             const urlObj = new URL(url);
-            let title = urlObj.hostname.replace("www.", "");
-            if (urlObj.pathname !== "/") {
-              title += urlObj.pathname.replace(/\/$/, "");
-            }
-            return title;
+            // A more robust way to create a title from a URL
+            let path = urlObj.pathname.replace(/\/$/, "").replace(/\//g, " › ");
+            let title = urlObj.hostname.replace("www.", "") + path;
+            return title.length > 70 ? title.substring(0, 67) + "..." : title;
           } catch (e) {
-            return url;
+            return url; // Fallback to the raw URL
           }
         }
 
