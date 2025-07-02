@@ -15,6 +15,8 @@ struct UrlResp {
 }
 
 pub mod main {
+    use std::time::Duration;
+
     use super::*;
     fn get_seed_file() -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let filepath = &env::var("SEED_URLS_FILE_PATH")?;
@@ -27,9 +29,13 @@ pub mod main {
         return Ok(seed_urls);
     }
 
-    async fn fetch_data(url: &str, client: &Client) -> Result<String, Box<dyn Error>> {
+    async fn fetch_data(
+        url: &str,
+        client: &Client,
+    ) -> Result<String, Box<dyn Error + Sync + Send>> {
         let data = client
             .get(url)
+            .timeout(Duration::from_secs(5))
             .header("accept", "text/html")
             .header("user-agent", "crawler")
             .send()
@@ -39,16 +45,16 @@ pub mod main {
         Ok(data)
     }
 
-    fn get_meta_description(document: &Html) -> Result<String, Box<dyn Error>> {
+    fn get_meta_description(document: &Html) -> Result<String, Box<dyn Error + Send + Sync>> {
         let meta_description = document
-            .select(&Selector::parse("meta[name='description']").unwrap())
+            .select(&Selector::parse("meta[name='content']").unwrap())
             .next()
             .and_then(|element| element.value().attr("content"))
             .unwrap_or("");
         Ok(meta_description.into())
     }
 
-    fn get_urls(document: &Html) -> Result<Vec<String>, Box<dyn Error>> {
+    fn get_urls(document: &Html) -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let mut urls: HashSet<String> = HashSet::new();
         let url_selector = Selector::parse("a").unwrap();
         for element in document.select(&url_selector) {
@@ -60,11 +66,14 @@ pub mod main {
         Ok(urls)
     }
 
-    fn get_content(document: &Html) -> Result<String, Box<dyn Error>> {
+    fn get_content(document: &Html) -> Result<String, Box<dyn Error + Send + Sync>> {
         let body_selector = Selector::parse("body, h1, h2, h3, h4, h5, h6, p, li, strong, em, label, input[type='text'], textarea, [aria-label]")
             .unwrap();
-        let body_element = document.select(&body_selector).next().unwrap();
-
+        let body_element = document.select(&body_selector).next();
+        if body_element.is_none() {
+            return Err("no body element found".into());
+        }
+        let body_element = body_element.unwrap();
         let mut text_parts = Vec::new();
         for element in body_element.select(&body_selector) {
             text_parts.push(element.text().collect::<Vec<_>>().join(""));
@@ -84,7 +93,7 @@ pub mod main {
         url: &str,
         client: &Client,
         force_fetch: bool,
-    ) -> Result<UrlResp, Box<dyn Error + Send>> {
+    ) -> Result<UrlResp, Box<dyn Error + Send + Sync>> {
         if !url.contains("http://") && !url.contains("https://") {
             return Ok(UrlResp {
                 urls: vec![],
@@ -108,12 +117,11 @@ pub mod main {
             }
         }
         println!("started fetching url : {url}");
-        let data = fetch_data(&url, &client).await.map_err(Into::into)?;
+        let data = fetch_data(&url, &client).await?;
         let document = scraper::Html::parse_document(&data);
-        let urls = get_urls(&document).unwrap();
-        let content = get_content(&document).unwrap();
-        let meta_description: String = get_meta_description(&document).unwrap();
-        println!("body parsed for url : {url}");
+        let urls = get_urls(&document)?;
+        let content = get_content(&document)?;
+        let meta_description = get_meta_description(&document)?;
         let mut index_content = true;
         match url_node {
             Some(node) => {
@@ -140,11 +148,12 @@ pub mod main {
         client: &Client,
         depth: u8,
         force_fetch: bool,
-    ) -> Result<bool, Box<dyn Error + Send>> {
+    ) -> Result<(), Box<dyn Error + Send>> {
         if depth == 0 {
-            return Ok(false);
+            return Ok(());
+            // return Ok(false);
         }
-        let is_fetched = false;
+        // let mut is_total_fetched = false;
         for url in urls {
             let handled_resp = handle_url(&url, &client, force_fetch).await;
             if handled_resp.is_err() {
@@ -153,12 +162,16 @@ pub mod main {
             }
             let UrlResp { urls, is_fetched } = handled_resp.unwrap();
             let next_res = Box::pin(handle_urls(urls, client, depth - 1, force_fetch)).await;
-            match next_res {
-                Ok(next_fetched) => is_fetched || next_fetched,
-                Err(_) => false,
-            };
+            // match next_res {
+            //     Ok(next_fetched) => {
+            //         is_total_fetched = is_fetched || next_fetched;
+            //         return Ok(is_fetched);
+            //     }
+            //     Err(_) => false,
+            // };
         }
-        Ok(is_fetched)
+        Ok(())
+        // Ok(is_total_fetched)
     }
 
     pub async fn init() -> Result<(), Box<dyn Error + Send>> {
@@ -170,6 +183,7 @@ pub mod main {
         if seed_urls.is_err() {
             panic!("error while getting seed urls : {:?}", seed_urls);
         }
+        // println!("seed urls ==> {:?}", seed_urls);
         let seed_urls = seed_urls.unwrap_or(vec![]);
         let client = Client::new();
         let handle_resp = handle_urls(seed_urls, &client, *crawl_depth, false).await;
@@ -179,17 +193,15 @@ pub mod main {
         Ok(())
     }
 
-    pub async fn handle_url_req(url: String) -> Result<(), Box<dyn Error + Send + Sync>> {
+    pub async fn handle_url_req(url: String) -> () {
         let crawl_depth = &env::var("CRAWL_DEPTH")
             .unwrap_or(String::from("10"))
             .parse::<u8>()
             .unwrap();
         let client = Client::new();
-        let pages_processed =
-            handle_urls(Vec::from([url.to_string()]), &client, *crawl_depth, true)
-                .await
-                .unwrap();
-        println!("url processed resp url: {url}, status: {pages_processed}");
-        Ok(())
+        handle_urls(Vec::from([url.to_string()]), &client, *crawl_depth, true)
+            .await
+            .unwrap();
+        println!("url processed resp url: {url}");
     }
 }

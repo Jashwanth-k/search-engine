@@ -39,18 +39,10 @@ struct IndexPayload {
 #[axum::debug_handler]
 async fn crawl_index_url(Json(payload): Json<IndexPayload>) -> Json<ApiRespIndex> {
     let url = payload.url;
-    let resp = crawler::main::handle_url_req(url).await;
+    tokio::spawn(async { crawler::main::handle_url_req(url).await });
     Json(ApiRespIndex {
         msg: "pages indexing finished".to_string(),
     })
-    // match resp {
-    //     Ok(pages) => Json(ApiRespIndex {
-    //         msg: "pages indexed successfully".to_string()
-    //     }),
-    //     Err(err) => Json(ApiRespIndex {
-    //         msg: err.to_string()
-    //     }),
-    // }
 }
 #[axum::debug_handler]
 async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRespSearch> {
@@ -109,7 +101,11 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
 #[tokio::main]
 async fn init() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
-    thread::spawn(|| {
+    let index_save_interval = env::var("INDEX_SAVE_INTERVAL_MIN")
+        .unwrap_or(String::from("30"))
+        .parse::<u8>()
+        .unwrap();
+    thread::spawn(move || {
         let inverted_index_thread = thread::spawn(|| {
             let _ = inverted_index::main::index();
         });
@@ -120,8 +116,8 @@ async fn init() -> Result<(), Box<dyn Error>> {
         let _ = url_index_thread.join().unwrap();
         let _ = thread::spawn(move || {
             loop {
-                thread::sleep(Duration::from_secs(30 * 30));
-                url_index::main::write_to_file();
+                thread::sleep(Duration::from_secs(index_save_interval as u64 * 30));
+                let _ = url_index::main::write_to_file();
             }
         });
         let runtime = tokio::runtime::Runtime::new().unwrap();
