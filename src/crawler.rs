@@ -47,7 +47,7 @@ pub mod main {
 
     fn get_meta_description(document: &Html) -> Result<String, Box<dyn Error + Send + Sync>> {
         let meta_description = document
-            .select(&Selector::parse("meta[name='content']").unwrap())
+            .select(&Selector::parse("meta[name='description']").unwrap())
             .next()
             .and_then(|element| element.value().attr("content"))
             .unwrap_or("");
