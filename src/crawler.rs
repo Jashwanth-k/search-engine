@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::{thread, time::Duration};
+use std::{thread, time::Duration, cmp};
 
 #[derive(Debug)]
 struct UrlResp {
@@ -62,7 +62,7 @@ pub mod main {
             .await?
             .text()
             .await?;
-        save_fetch_log(url);
+        let _ = save_fetch_log(url);
         Ok(data)
     }
 
@@ -235,18 +235,21 @@ pub mod main {
 
     pub fn init_multiple() -> Result<(), Box<dyn Error + Send + Sync>> {
         let seed_urls = get_seed_file();
-        let crawl_threads_no = &env::var("CRAWL_THREADS")
+        let mut available_threads = thread::available_parallelism().unwrap().get();
+        let crawl_threads_multiplier = &env::var("CRAWL_THREADS_MULTIPLIER")
             .unwrap_or(String::from("2"))
             .parse::<u8>()
             .unwrap();
+        available_threads = cmp::max(available_threads * *crawl_threads_multiplier as usize, 1);
+        println!("available crawler threads : {available_threads}");
         if seed_urls.is_err() {
             panic!("error while getting seed urls : {:?}", seed_urls);
         }
         let seed_urls = seed_urls.unwrap_or(vec![]);
         let mut splitted_seed_urls: Vec<Vec<String>> =
-            (0..*crawl_threads_no).map(|el| Vec::new()).collect();
+            (0..available_threads).map(|el| Vec::new()).collect();
         for (idx, url) in seed_urls.iter().enumerate() {
-            splitted_seed_urls[idx % *crawl_threads_no as usize].push(url.to_string());
+            splitted_seed_urls[idx % available_threads as usize].push(url.to_string());
         }
         println!(
             "splitted urls => {:?}, total => {}",

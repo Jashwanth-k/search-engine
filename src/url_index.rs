@@ -54,17 +54,20 @@ pub mod main {
         let meta_content = &node.meta_content;
         let write_content = format!("{}$$==$$=$${}$$==$$=$${}\n", url, content, meta_content);
         let _ = file.write(write_content.as_bytes());
-        traverse_and_write(&node.right, &file).unwrap();
-        traverse_and_write(&node.left, &file).unwrap();
+        let _ = traverse_and_write(&node.right, &file);
+        let _ = traverse_and_write(&node.left, &file);
         Ok(())
     }
 
     pub fn write_to_file() -> Result<(), Box<dyn Error + Send + Sync>> {
+        println!("writing index to file");
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
-        let file_data = File::create(filepath)?;
+        let temp_filepath = String::from(filepath).replace(".txt", "-temp.txt");
+        let file_data = File::create(&temp_filepath)?;
         let root_clone = root.clone();
         let root_ref = root_clone.read().unwrap();
-        traverse_and_write(&root_ref, &file_data).unwrap();
+        let _ = traverse_and_write(&root_ref, &file_data);
+        let _ = fs::rename(&temp_filepath, filepath);
         Ok(())
     }
 

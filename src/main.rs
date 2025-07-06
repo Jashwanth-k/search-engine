@@ -100,10 +100,20 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
 
 fn init() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
-    let index_save_interval = env::var("INDEX_SAVE_INTERVAL_MIN")
-        .unwrap_or(String::from("30"))
-        .parse::<u8>()
-        .unwrap();
+    let tcp_thread = thread::spawn(|| {
+        let app = Router::new()
+        .route(
+            "/api/search/{search_text}",
+            routing::get(get_pages_by_search_text),
+        )
+        .route("/api/index", routing::post(crawl_index_url))
+        .route("/", routing::get(get_homepage));
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        runtime.block_on(async {
+            let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+            axum::serve(listener, app).await.unwrap()
+        });
+    });
     let inverted_index_thread = thread::spawn(|| {
         let _ = inverted_index::main::index();
     });
@@ -112,6 +122,10 @@ fn init() -> Result<(), Box<dyn Error>> {
     });
     let _ = inverted_index_thread.join().unwrap();
     let _ = url_index_thread.join().unwrap();
+    let index_save_interval = env::var("INDEX_SAVE_INTERVAL_MIN")
+        .unwrap_or(String::from("30"))
+        .parse::<u8>()
+        .unwrap();
     let _ = thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(index_save_interval as u64 * 60));
@@ -130,18 +144,7 @@ fn init() -> Result<(), Box<dyn Error>> {
             }
         });
     }
-    let app = Router::new()
-        .route(
-            "/api/search/{search_text}",
-            routing::get(get_pages_by_search_text),
-        )
-        .route("/api/index", routing::post(crawl_index_url))
-        .route("/", routing::get(get_homepage));
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-        axum::serve(listener, app).await.unwrap()
-    });
+    let _ = tcp_thread.join();
     Ok(())
 }
 
