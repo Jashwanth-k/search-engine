@@ -1,12 +1,15 @@
 use crate::url_index;
 use chrono;
+use lazy_static::lazy_static;
 use reqwest::Client;
 use scraper::Html;
 use scraper::Selector;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fs;
+use std::{thread, time::Duration};
 
 #[derive(Debug)]
 struct UrlResp {
@@ -14,9 +17,17 @@ struct UrlResp {
     is_fetched: bool,
 }
 
-pub mod main {
-    use std::time::Duration;
+struct QueueEle {
+    urls: Vec<String>,
+    depth: u8,
+}
 
+lazy_static! {
+    static ref client: Client = Client::new();
+}
+
+use std::io::Write;
+pub mod main {
     use super::*;
     fn get_seed_file() -> Result<Vec<String>, Box<dyn Error + Send + Sync>> {
         let filepath = &env::var("SEED_URLS_FILE_PATH")?;
@@ -29,10 +40,19 @@ pub mod main {
         return Ok(seed_urls);
     }
 
-    async fn fetch_data(
-        url: &str,
-        client: &Client,
-    ) -> Result<String, Box<dyn Error + Sync + Send>> {
+    fn save_fetch_log(url: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let filepath = "data/fetch_log.txt";
+        let mut file_data = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(filepath)?;
+        let write_content = format!("{}\n", url);
+        let _ = file_data.write(write_content.as_bytes());
+        Ok(())
+    }
+
+    async fn fetch_data(url: &str) -> Result<String, Box<dyn Error + Sync + Send>> {
+        println!("started fetching url : {url}");
         let data = client
             .get(url)
             .timeout(Duration::from_secs(5))
@@ -42,6 +62,7 @@ pub mod main {
             .await?
             .text()
             .await?;
+        save_fetch_log(url);
         Ok(data)
     }
 
@@ -91,7 +112,6 @@ pub mod main {
 
     async fn handle_url(
         url: &str,
-        client: &Client,
         force_fetch: bool,
     ) -> Result<UrlResp, Box<dyn Error + Send + Sync>> {
         if !url.contains("http://") && !url.contains("https://") {
@@ -100,6 +120,9 @@ pub mod main {
                 is_fetched: false,
             });
         }
+        let data = fetch_data(&url).await?;
+        let document = scraper::Html::parse_document(&data);
+        let urls = get_urls(&document)?;
         let url_node = url_index::main::get_by_url(url);
         if url_node.is_some() && force_fetch == false {
             let url_timestamp = url_node.as_ref().unwrap().timestamp;
@@ -111,15 +134,11 @@ pub mod main {
                 .unwrap();
             if date_diff_days < *req_date_diff {
                 return Ok(UrlResp {
-                    urls: vec![],
-                    is_fetched: false,
+                    urls: urls,
+                    is_fetched: true,
                 });
             }
         }
-        println!("started fetching url : {url}");
-        let data = fetch_data(&url, &client).await?;
-        let document = scraper::Html::parse_document(&data);
-        let urls = get_urls(&document)?;
         let content = get_content(&document)?;
         let meta_description = get_meta_description(&document)?;
         let mut index_content = true;
@@ -145,50 +164,114 @@ pub mod main {
 
     async fn handle_urls(
         urls: Vec<String>,
-        client: &Client,
         depth: u8,
         force_fetch: bool,
-    ) -> Result<(), Box<dyn Error + Send>> {
-        if depth == 0 {
-            return Ok(());
-            // return Ok(false);
-        }
-        // let mut is_total_fetched = false;
-        for url in urls {
-            let handled_resp = handle_url(&url, &client, force_fetch).await;
-            if handled_resp.is_err() {
-                println!("error in handling url : {url}, error : {:?}", handled_resp);
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut dqueue: VecDeque<QueueEle> = VecDeque::from([QueueEle { urls, depth }]);
+        let mut visited: HashSet<String> = HashSet::new();
+        while dqueue.len() != 0 {
+            let QueueEle {
+                urls: curr_urls,
+                depth: curr_depth,
+            } = dqueue.pop_front().unwrap();
+            if curr_depth == 0 {
                 continue;
             }
-            let UrlResp { urls, is_fetched } = handled_resp.unwrap();
-            let next_res = Box::pin(handle_urls(urls, client, depth - 1, force_fetch)).await;
-            // match next_res {
-            //     Ok(next_fetched) => {
-            //         is_total_fetched = is_fetched || next_fetched;
-            //         return Ok(is_fetched);
-            //     }
-            //     Err(_) => false,
-            // };
+            let mut join_handles = Vec::new();
+            for url in curr_urls {
+                if visited.contains(&url) {
+                    continue;
+                }
+                visited.insert(url.clone());
+                let handle_res = tokio::spawn(async move { handle_url(&url, force_fetch).await });
+                join_handles.push(handle_res);
+            }
+            let mut next_results: Vec<Vec<String>> = Vec::new();
+            for handle in join_handles {
+                let handled_resp = handle.await;
+                if handled_resp.is_err() {
+                    println!("error in awaiting handling url {:?}", handled_resp);
+                    continue;
+                }
+                let handled_resp = handled_resp.unwrap();
+                if handled_resp.is_err() {
+                    println!("error in handling url {:?}", handled_resp);
+                    continue;
+                }
+                let UrlResp {
+                    urls,
+                    is_fetched: _,
+                } = handled_resp.unwrap();
+                let mut idx= 0;
+                for url in urls {
+                    while next_results.len() <= idx {
+                        next_results.push(Vec::new());
+                    }
+                    next_results[idx].push(url);
+                    idx += 1;
+                }
+            }
+            for urls in next_results {
+                dqueue.push_back(QueueEle {
+                    urls,
+                    depth: depth - 1,
+                });
+            }
         }
         Ok(())
-        // Ok(is_total_fetched)
     }
 
-    pub async fn init() -> Result<(), Box<dyn Error + Send>> {
+    pub async fn init(
+        seed_urls: Vec<String>,
+        crawl_depth: u8,
+    ) -> Result<(), Box<dyn Error + Send>> {
+        println!("seed urls init ==> {:?}", seed_urls);
+        let handle_resp = handle_urls(seed_urls, crawl_depth, false).await;
+        if handle_resp.is_err() {
+            println!("error in handling seed urls : {:?}", handle_resp);
+        }
+        Ok(())
+    }
+
+    pub fn init_multiple() -> Result<(), Box<dyn Error + Send + Sync>> {
         let seed_urls = get_seed_file();
-        let crawl_depth = &env::var("CRAWL_DEPTH")
-            .unwrap_or(String::from("10"))
+        let crawl_threads_no = &env::var("CRAWL_THREADS")
+            .unwrap_or(String::from("2"))
             .parse::<u8>()
             .unwrap();
         if seed_urls.is_err() {
             panic!("error while getting seed urls : {:?}", seed_urls);
         }
-        // println!("seed urls ==> {:?}", seed_urls);
         let seed_urls = seed_urls.unwrap_or(vec![]);
-        let client = Client::new();
-        let handle_resp = handle_urls(seed_urls, &client, *crawl_depth, false).await;
-        if handle_resp.is_err() {
-            println!("error in handling seed urls : {:?}", handle_resp);
+        let mut splitted_seed_urls: Vec<Vec<String>> =
+            (0..*crawl_threads_no).map(|el| Vec::new()).collect();
+        for (idx, url) in seed_urls.iter().enumerate() {
+            splitted_seed_urls[idx % *crawl_threads_no as usize].push(url.to_string());
+        }
+        println!(
+            "splitted urls => {:?}, total => {}",
+            splitted_seed_urls,
+            seed_urls.len()
+        );
+        let mut threads = Vec::new();
+        for seed_urls in splitted_seed_urls {
+            let handle = thread::spawn(|| {
+                let crawl_depth = &env::var("CRAWL_DEPTH")
+                    .unwrap_or(String::from("10"))
+                    .parse::<u8>()
+                    .unwrap();
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                runtime.block_on(async {
+                    let handle_resp = init(seed_urls, *crawl_depth).await;
+                    if handle_resp.is_err() {
+                        println!("error in handling seed urls : {:?}", handle_resp);
+                    }
+                })
+            });
+            threads.push(handle);
+        }
+        for handle in threads {
+            let _ = handle.join().unwrap();
         }
         Ok(())
     }
@@ -198,8 +281,7 @@ pub mod main {
             .unwrap_or(String::from("10"))
             .parse::<u8>()
             .unwrap();
-        let client = Client::new();
-        handle_urls(Vec::from([url.to_string()]), &client, *crawl_depth, true)
+        handle_urls(Vec::from([url.to_string()]), *crawl_depth, true)
             .await
             .unwrap();
         println!("url processed resp url: {url}");

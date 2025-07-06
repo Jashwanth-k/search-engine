@@ -3,4 +3,5 @@
 Cargo.lock
 /data/inverted_index.txt
 /data/url_index.txt
+/data/fetch_log.txt
 .env

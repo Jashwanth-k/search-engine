@@ -98,47 +98,50 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
     });
 }
 
-#[tokio::main]
-async fn init() -> Result<(), Box<dyn Error>> {
+fn init() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
     let index_save_interval = env::var("INDEX_SAVE_INTERVAL_MIN")
         .unwrap_or(String::from("30"))
         .parse::<u8>()
         .unwrap();
-    thread::spawn(move || {
-        let inverted_index_thread = thread::spawn(|| {
-            let _ = inverted_index::main::index();
-        });
-        let url_index_thread = thread::spawn(|| {
-            let _ = url_index::main::index();
-        });
-        let _ = inverted_index_thread.join().unwrap();
-        let _ = url_index_thread.join().unwrap();
-        let _ = thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_secs(index_save_interval as u64 * 30));
-                let _ = url_index::main::write_to_file();
-            }
-        });
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime.block_on(async {
-            loop {
-                let _ = crawler::main::init().await;
-            }
-        });
+    let inverted_index_thread = thread::spawn(|| {
+        let _ = inverted_index::main::index();
     });
+    let url_index_thread = thread::spawn(|| {
+        let _ = url_index::main::index();
+    });
+    let _ = inverted_index_thread.join().unwrap();
+    let _ = url_index_thread.join().unwrap();
+    let _ = thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(index_save_interval as u64 * 60));
+            let _ = url_index::main::write_to_file();
+        }
+    });
+    let stop_crawler = env::var("STOP_CRAWLER")
+        .unwrap_or("false".to_string())
+        .parse::<bool>()
+        .unwrap();
+    if stop_crawler != true {
+        thread::spawn(|| {
+            loop {
+                let _ = crawler::main::init_multiple();
+                thread::sleep(Duration::from_secs(60 * 10));
+            }
+        });
+    }
     let app = Router::new()
         .route(
-            "/search/{search_text}",
+            "/api/search/{search_text}",
             routing::get(get_pages_by_search_text),
         )
-        .route("/index", routing::post(crawl_index_url))
-        .route("/home", routing::get(get_homepage));
-    let tcp_thread = thread::spawn(|| async {
+        .route("/api/index", routing::post(crawl_index_url))
+        .route("/", routing::get(get_homepage));
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
         axum::serve(listener, app).await.unwrap()
     });
-    let _ = tcp_thread.join().unwrap().await;
     Ok(())
 }
 
@@ -201,5 +204,8 @@ async fn get_homepage() -> Html<String> {
         return Html(error_page.to_string());
     }
     let file_data = file_data.unwrap();
-    Html(file_data.to_string())
+    let api_base_url = env::var("API_BASE_URL=")
+        .unwrap_or("http://localhost:8080".to_string());
+    let file_data = file_data.replace("__API_BASE_URL__", &api_base_url);
+    Html(file_data)
 }

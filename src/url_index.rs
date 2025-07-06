@@ -49,8 +49,8 @@ pub mod main {
         let meta_content = &node.meta_content;
         let write_content = format!("{}$$==$$=$${}$$==$$=$${}\n", url, content, meta_content);
         let _ = file.write(write_content.as_bytes());
-        traverse_and_write(&node.right, &file);
-        traverse_and_write(&node.left, &file);
+        traverse_and_write(&node.right, &file).unwrap();
+        traverse_and_write(&node.left, &file).unwrap();
         Ok(())
     }
 
@@ -59,7 +59,7 @@ pub mod main {
         let file_data = File::create(filepath)?;
         let root_clone = root.clone();
         let root_ref = root_clone.read().unwrap();
-        traverse_and_write(&root_ref, &file_data);
+        traverse_and_write(&root_ref, &file_data).unwrap();
         Ok(())
     }
 
@@ -96,7 +96,7 @@ pub mod main {
             node.hash = get_hash(content);
             node.timestamp = chrono::Utc::now();
             return Option::None;
-        } else if *node.url >= *url {
+        } else if *url >= *node.url {
             let resp = insert_helper(&mut node.right, url, content, meta_content);
             match resp {
                 Some(next_node) => {
@@ -106,7 +106,7 @@ pub mod main {
                 _ => return Option::None,
             }
         } else {
-            let resp = insert_helper(&mut node.right, url, content, meta_content);
+            let resp = insert_helper(&mut node.left, url, content, meta_content);
             match resp {
                 Some(next_node) => {
                     *node.left = Option::Some(next_node);

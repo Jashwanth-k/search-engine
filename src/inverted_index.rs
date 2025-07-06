@@ -78,6 +78,7 @@ pub mod main {
     }
 
     pub fn insert_by_content(url: &str, content: &str) {
+        println!("inverted_index insert triggered => url : {url}");
         let words_map = content
             .split_whitespace()
             .fold(HashMap::new(), |mut acc, word| {
@@ -91,7 +92,6 @@ pub mod main {
 
     pub fn insert(text: &str, url: &str, count: u64) {
         let text = &text.to_string().to_lowercase();
-        println!("inverted_index insert triggered => text : {text}, url : {url}");
         let mut root_ref = root.write().unwrap();
         if root_ref.is_none() {
             *root_ref = Some(Node {

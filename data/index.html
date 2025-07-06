@@ -306,7 +306,7 @@
   <body>
     <div id="page-container">
       <header id="search-header">
-        <button id="open-modal-button">Submit URL</button>
+        <button id="open-modal-button">Submit Web page</button>
         <h1 class="logo">Search</h1>
         <div class="search-box">
           <input
@@ -345,7 +345,7 @@
 
     <script>
       document.addEventListener("DOMContentLoaded", () => {
-        const API_BASE_URL = "http://localhost:8080";
+        const API_BASE_URL = "__API_BASE_URL__";
 
         // --- DOM Element References ---
         const body = document.body;
@@ -391,12 +391,12 @@
             displayResults(apiResponse.data);
           } catch (error) {
             console.error("Search failed:", error);
-            resultsContainer.innerHTML = `<div class="result-item"><div class="message-box error">Search failed: ${error.message}. Is the API server running?</div></div>`;
+            resultsContainer.innerHTML = `<div class="result-item"><div class="message-box error">Search failed: ${error.message}</div></div>`;
           }
         }
 
         async function fetchSearchResults(query) {
-          const url = `${API_BASE_URL}/search/${encodeURIComponent(query)}`;
+          const url = `${API_BASE_URL}/api/search/${encodeURIComponent(query)}`;
           const response = await fetch(url);
           if (!response.ok) {
             throw new Error(`Server responded with status ${response.status}`);
@@ -458,7 +458,7 @@
           submitUrlButton.disabled = true;
 
           try {
-            const response = await fetch(`${API_BASE_URL}/index`, {
+            const response = await fetch(`${API_BASE_URL}/api/index`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ url: urlToSubmit }),
