@@ -214,7 +214,7 @@ pub mod main {
             for urls in next_results {
                 dqueue.push_back(QueueEle {
                     urls,
-                    depth: depth - 1,
+                    depth: curr_depth - 1,
                 });
             }
         }
