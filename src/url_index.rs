@@ -29,7 +29,12 @@ pub mod main {
         let file_data = fs::read_to_string(filepath)?;
         let file_content: Vec<_> = file_data.lines().map(String::from).collect();
         for content in file_content {
-            let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
+            let mut content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
+            match content_data.len() {
+                0..2 => continue,
+                2 => content_data.push(""),
+                _ => (),
+            }
             let [url, content, meta_content]: [&str; 3] = content_data[..3].try_into().unwrap();
             insert(url, content, meta_content);
         }

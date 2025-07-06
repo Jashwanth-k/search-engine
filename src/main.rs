@@ -204,7 +204,7 @@ async fn get_homepage() -> Html<String> {
         return Html(error_page.to_string());
     }
     let file_data = file_data.unwrap();
-    let api_base_url = env::var("API_BASE_URL=")
+    let api_base_url = env::var("API_BASE_URL")
         .unwrap_or("http://localhost:8080".to_string());
     let file_data = file_data.replace("__API_BASE_URL__", &api_base_url);
     Html(file_data)
