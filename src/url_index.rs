@@ -11,15 +11,40 @@ use std::{env, fs};
 pub struct Node {
     url: String,
     pub hash: String,
-    pub meta_content: String,
-    content: String,
+    pub title: String,
+    pub headings: String,
+    pub highlighted: String,
+    pub content: String,
     left: Box<Option<Node>>,
     right: Box<Option<Node>>,
     pub timestamp: DateTime<Utc>,
 }
 
+pub struct FieldCount {
+    pub url: u64,
+    pub title: u64,
+    pub headings: u64,
+    pub highlighted: u64,
+    pub content: u64,
+}
+
+pub struct IndexConfig {
+    pub total_count: u64,
+    pub field_count: FieldCount,
+}
+
 lazy_static! {
     static ref root: Arc<RwLock<Option<Node>>> = Arc::new(RwLock::new(Option::None));
+    pub static ref INDEX_CONFIG: Arc<RwLock<IndexConfig>> = Arc::new(RwLock::new(IndexConfig {
+        total_count: 0,
+        field_count: FieldCount {
+            url: 0,
+            title: 0,
+            headings: 0,
+            highlighted: 0,
+            content: 0,
+        }
+    }));
 }
 
 pub mod main {
@@ -29,14 +54,14 @@ pub mod main {
         let file_data = fs::read_to_string(filepath)?;
         let file_content: Vec<_> = file_data.lines().map(String::from).collect();
         for content in file_content {
-            let mut content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
+            let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
             match content_data.len() {
-                0..2 => continue,
-                2 => content_data.push(""),
-                _ => (),
+                5 => (),
+                _ => continue,
             }
-            let [url, content, meta_content]: [&str; 3] = content_data[..3].try_into().unwrap();
-            insert(url, content, meta_content);
+            let [url, title, headings, highlighted, content]: [&str; 5] =
+                content_data[..5].try_into().unwrap();
+            insert(url, content, title, headings, highlighted);
         }
         Ok(())
     }
@@ -51,8 +76,13 @@ pub mod main {
         let node = node.as_ref().unwrap();
         let url = &node.url;
         let content = &node.content;
-        let meta_content = &node.meta_content;
-        let write_content = format!("{}$$==$$=$${}$$==$$=$${}\n", url, content, meta_content);
+        let title = &node.title;
+        let headings = &node.headings;
+        let highlighted = &node.highlighted;
+        let write_content = format!(
+            "{}$$==$$=$${}$$==$$=$${}$$==$$=$${}$$==$$=$${}\n",
+            url, title, headings, highlighted, content
+        );
         let _ = file.write(write_content.as_bytes());
         let _ = traverse_and_write(&node.right, &file);
         let _ = traverse_and_write(&node.left, &file);
@@ -79,11 +109,33 @@ pub mod main {
         return hash;
     }
 
+    pub fn calc_helper(old_value: u64, curr_value: u64, count: u64) -> u64 {
+        old_value * ((count - 1) / count) + (curr_value / count)
+    }
+
+    pub fn handle_index_config_update(
+        url: &str,
+        content: &str,
+        title: &str,
+        headings: &str,
+        highlighted: &str,
+    ) {
+        let mut curr_index_config = INDEX_CONFIG.write().unwrap();
+        curr_index_config.total_count += 1;
+        curr_index_config.field_count.url += url.len() as u64;
+        curr_index_config.field_count.content += content.len() as u64;
+        curr_index_config.field_count.title += title.len() as u64;
+        curr_index_config.field_count.headings += headings.len() as u64;
+        curr_index_config.field_count.highlighted += highlighted.len() as u64;
+    }
+
     fn insert_helper(
         node: &mut Option<Node>,
         url: &str,
         content: &str,
-        meta_content: &str,
+        title: &str,
+        headings: &str,
+        highlighted: &str,
     ) -> Option<Node> {
         if node.is_none() {
             let hash = get_hash(content);
@@ -91,7 +143,9 @@ pub mod main {
                 url: String::from(url),
                 hash: hash,
                 content: String::from(content),
-                meta_content: String::from(meta_content),
+                title: String::from(title),
+                headings: String::from(headings),
+                highlighted: String::from(highlighted),
                 left: Box::new(Option::None),
                 right: Box::new(Option::None),
                 timestamp: chrono::Utc::now(),
@@ -100,12 +154,14 @@ pub mod main {
         }
         let node = node.as_mut().unwrap();
         if node.url == url {
-            node.meta_content = String::from(meta_content);
+            node.title = String::from(title);
+            node.headings = String::from(headings);
+            node.highlighted = String::from(highlighted);
             node.hash = get_hash(content);
             node.timestamp = chrono::Utc::now();
             return Option::None;
         } else if *url >= *node.url {
-            let resp = insert_helper(&mut node.right, url, content, meta_content);
+            let resp = insert_helper(&mut node.right, url, content, title, headings, highlighted);
             match resp {
                 Some(next_node) => {
                     *node.right = Option::Some(next_node);
@@ -114,7 +170,7 @@ pub mod main {
                 _ => return Option::None,
             }
         } else {
-            let resp = insert_helper(&mut node.left, url, content, meta_content);
+            let resp = insert_helper(&mut node.left, url, content, title, headings, highlighted);
             match resp {
                 Some(next_node) => {
                     *node.left = Option::Some(next_node);
@@ -125,7 +181,7 @@ pub mod main {
         }
     }
 
-    pub fn insert(url: &str, content: &str, meta_content: &str) {
+    pub fn insert(url: &str, content: &str, title: &str, headings: &str, highlighted: &str) {
         println!("url_index insert triggered => url : {url}");
         let mut root_ref = root.write().unwrap();
         if root_ref.is_none() {
@@ -134,15 +190,19 @@ pub mod main {
                 url: String::from(url),
                 hash: hash,
                 content: String::from(content),
-                meta_content: String::from(meta_content),
+                title: String::from(title),
+                headings: String::from(headings),
+                highlighted: String::from(highlighted),
                 left: Box::new(Option::None),
                 right: Box::new(Option::None),
                 timestamp: chrono::Utc::now(),
             });
             println!("root is updated");
+            handle_index_config_update(url, content, title, headings, highlighted);
             return;
         }
-        insert_helper(&mut root_ref, url, content, meta_content);
+        insert_helper(&mut root_ref, url, content, title, headings, highlighted);
+        handle_index_config_update(url, content, title, headings, highlighted);
     }
 
     fn get_helper(node: &Option<Node>, url: &str) -> Option<Node> {

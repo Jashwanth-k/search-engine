@@ -6,7 +6,7 @@ use axum::{
 };
 use dotenv;
 use serde::{Deserialize, Serialize};
-use std::{collections::BinaryHeap, time::Duration};
+use std::time::Duration;
 use std::{env, error::Error, fs, thread};
 use tokio;
 
@@ -17,7 +17,7 @@ mod url_index;
 #[derive(Serialize, Deserialize)]
 struct SearchPagesResult {
     url: String,
-    meta_content: String,
+    title: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,9 +46,8 @@ async fn crawl_index_url(Json(payload): Json<IndexPayload>) -> Json<ApiRespIndex
 }
 #[axum::debug_handler]
 async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRespSearch> {
-    let top_k = 10;
     let url_resp = inverted_index::main::get_by_text(&search_text);
-    let mut heap = BinaryHeap::<(i64, String)>::new();
+    // let mut heap = BinaryHeap::<(i64, String)>::new();
     if let None = url_resp {
         let data = ApiRespSearch {
             msg: "No Pages Found!".to_string(),
@@ -56,24 +55,19 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
         };
         return Json(data);
     }
-    let urls_map = url_resp.unwrap();
-    for (word, count) in urls_map {
-        let count = -(count as i64);
-        heap.push((count, word));
-        if heap.capacity() > top_k {
-            heap.pop();
-        }
-    }
+    let urls = url_resp.unwrap();
+    // for (word, count) in urls_map {
+    //     let count = -(count as i64);
+    //     heap.push((count, word));
+    //     if heap.capacity() > top_k {
+    //         heap.pop();
+    //     }
+    // }
 
     println!(
         "search text resp => text: {search_text}, result: {:?}",
-        heap
+        urls
     );
-    let urls = heap
-        .into_sorted_vec()
-        .into_iter()
-        .map(|(count, url)| url)
-        .collect::<Vec<String>>();
     // println!("fetched urls {:?}", urls);
     let data = urls
         .iter()
@@ -82,13 +76,13 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
             if url_data.is_none() {
                 return SearchPagesResult {
                     url: url.to_string(),
-                    meta_content: String::new(),
+                    title: String::new(),
                 };
             }
             let url_data = url_data.unwrap();
             return SearchPagesResult {
                 url: url.to_string(),
-                meta_content: url_data.meta_content,
+                title: url_data.title,
             };
         })
         .collect();
@@ -102,12 +96,12 @@ fn init() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().ok();
     let tcp_thread = thread::spawn(|| {
         let app = Router::new()
-        .route(
-            "/api/search/{search_text}",
-            routing::get(get_pages_by_search_text),
-        )
-        .route("/api/index", routing::post(crawl_index_url))
-        .route("/", routing::get(get_homepage));
+            .route(
+                "/api/search/{search_text}",
+                routing::get(get_pages_by_search_text),
+            )
+            .route("/api/index", routing::post(crawl_index_url))
+            .route("/", routing::get(get_homepage));
         let runtime = tokio::runtime::Runtime::new().unwrap();
         runtime.block_on(async {
             let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -128,7 +122,7 @@ fn init() -> Result<(), Box<dyn Error>> {
         .unwrap();
     let _ = thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_secs(index_save_interval as u64 * 60));
+            thread::sleep(Duration::from_secs(index_save_interval as u64 * 10));
             let _ = url_index::main::write_to_file();
         }
     });
@@ -207,8 +201,7 @@ async fn get_homepage() -> Html<String> {
         return Html(error_page.to_string());
     }
     let file_data = file_data.unwrap();
-    let api_base_url = env::var("API_BASE_URL")
-        .unwrap_or("http://localhost:8080".to_string());
+    let api_base_url = env::var("API_BASE_URL").unwrap_or("http://localhost:8080".to_string());
     let file_data = file_data.replace("__API_BASE_URL__", &api_base_url);
     Html(file_data)
 }
