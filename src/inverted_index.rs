@@ -1,12 +1,16 @@
-use crate::SearchPagesResult;
 use crate::url_index;
+use float_ord::FloatOrd;
 use lazy_static::lazy_static;
+use serde::{Deserialize, Serialize};
+use std::collections::BinaryHeap;
+use std::collections::HashMap;
 use std::io::Write;
 use std::{
     collections::HashSet,
     sync::{Arc, RwLock},
 };
 use std::{env, error::Error, fs};
+
 pub struct Node {
     text: String,
     urls: HashSet<String>,
@@ -14,6 +18,7 @@ pub struct Node {
     right: Box<Option<Node>>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ResultScore {
     url: String,
     title: String,
@@ -25,7 +30,6 @@ lazy_static! {
 }
 
 pub mod main {
-
     use super::*;
     pub fn index() -> Result<(), Box<dyn Error>> {
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
@@ -39,6 +43,7 @@ pub mod main {
             }
             let [url, title, headings, highlighted, content]: [&str; 5] =
                 content_data[..5].try_into().unwrap();
+            // println!("{url} == {content} == {title} == {headings} == {highlighted}");
             insert_by_content(url, content, title, headings, highlighted);
         }
         Ok(())
@@ -101,6 +106,7 @@ pub mod main {
         let whole_content = format!("{} {} {} {}", title, headings, highlighted, content);
         let words_map = whole_content.split_whitespace();
         for word in words_map {
+            // println!("🔥🔥 word : {word} ==== url : {url}");
             insert(word, url);
         }
     }
@@ -150,7 +156,8 @@ pub mod main {
         Some(combined_result)
     }
 
-    fn get_bm25_score(n_q: u64, d: u64, avdl: u64, n: u64) -> f64 {
+    fn get_bm25_score(f_q_d: u64, d: u64, avdl: u64, n: u64, n_q: u64) -> f64 {
+        // f_q_d no of times query q occurs in doc
         // n_q no of docs containing query q
         // d length of doc
         // avdl average document len across collection
@@ -164,21 +171,23 @@ pub mod main {
         let k = 1.2;
         let b = 1 as f64;
         let n_q = n_q as f64;
+        let f_q_d = f_q_d as f64;
         let d = d as f64;
         let avdl = avdl as f64;
         let n = n as f64;
         let idf = (((n - n_q + 0.5) / (n_q + 0.5)) + 1.0).ln();
-        let tf_satur = (n_q * (k + 1.0)) / (n_q + k * (1.0 - b + b * (d / avdl)));
+        let tf_satur = (f_q_d * (k + 1.0)) / (f_q_d + k * (1.0 - b + b * (d / avdl)));
         let rank = idf * tf_satur;
         rank
     }
 
-    pub fn get_score_helper(
+    fn get_score_helper(
         weight: u8,
         document: &String,
         query: &str,
         total_doc_len: u64,
         total_doc_count: u64,
+        total_query_count_doc: u64,
     ) -> f64 {
         let doc_len = document.len() as u64;
         let avg_content_len = total_doc_len / total_doc_count;
@@ -188,26 +197,37 @@ pub mod main {
                 occurance_count += 1
             }
         }
-        weight as f64 * get_bm25_score(occurance_count, doc_len, avg_content_len, total_doc_count)
+        weight as f64
+            * get_bm25_score(
+                occurance_count,
+                doc_len,
+                avg_content_len,
+                total_doc_count,
+                total_query_count_doc,
+            )
     }
 
-    pub fn get_text_by_scoring(text: &str) -> Option<Vec<SearchPagesResult>> {
+    pub fn get_text_by_scoring(text: &str) -> Result<Vec<ResultScore>, Box<dyn Error>> {
+        let top_k = &env::var("TOP_K")
+            .unwrap_or(String::from("10"))
+            .parse::<u8>()
+            .unwrap();
         let text = text.to_string().to_lowercase();
         let root_ref = root.read().unwrap();
-        let mut combines_result = Vec::<ResultScore>::new();
+        let mut combines_map = HashMap::<String, (String, f64)>::new();
         for word in text.split_whitespace() {
             let word_urls = get_helper(&root_ref, word);
             if word_urls.is_none() {
                 continue;
             }
             let word_urls = word_urls.unwrap();
+            let word_freq = word_urls.len() as u64;
             for word_url in word_urls {
                 let data_node = url_index::main::get_by_url(&word_url);
                 if data_node.is_none() {
                     continue;
                 }
                 let data_node = data_node.unwrap();
-                // let title = data_node.title;
                 let url_index::Node {
                     title,
                     headings,
@@ -223,30 +243,54 @@ pub mod main {
                     word,
                     curr_index_config.field_count.title,
                     curr_index_config.total_count,
+                    word_freq,
                 ) + get_score_helper(
                     4,
                     &headings,
                     word,
                     curr_index_config.field_count.headings,
                     curr_index_config.total_count,
+                    word_freq,
                 ) + get_score_helper(
                     2,
                     &highlighted,
                     word,
                     curr_index_config.field_count.highlighted,
                     curr_index_config.total_count,
+                    word_freq,
                 ) + get_score_helper(
                     1,
                     &content,
                     word,
                     curr_index_config.field_count.content,
                     curr_index_config.total_count,
+                    word_freq,
                 );
-                combines_result.push(ResultScore { url: word_url, title: title, score: curr_score });
+                combines_map
+                    .entry(word_url.to_string())
+                    .and_modify(|entry| {
+                        entry.1 += curr_score;
+                    })
+                    .or_insert((title.to_string(), curr_score));
             }
-        };
+        }
 
-        
-        None
+        let mut heap = BinaryHeap::<(FloatOrd<f64>, String, String)>::new();
+        for (url, (title, score)) in combines_map {
+            heap.push((FloatOrd(-score), url, title));
+            if heap.capacity() as u64 > *top_k as u64 {
+                heap.pop();
+            }
+        }
+        let final_result = heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|(score, url, title)| ResultScore {
+                score: -score.0,
+                url,
+                title,
+            })
+            .collect::<Vec<ResultScore>>();
+        Ok(final_result)
     }
 }

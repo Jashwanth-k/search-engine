@@ -55,7 +55,7 @@ pub mod main {
         println!("started fetching url : {url}");
         let data = client
             .get(url)
-            .timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(10))
             .header("accept", "text/html")
             .header("user-agent", "crawler")
             .send()
@@ -93,14 +93,17 @@ pub mod main {
     ) -> Result<String, Box<dyn Error + Send + Sync>> {
         // ("body, title, h1, h2, h3, h4, h5, h6, p, strong, b, i, em")
         let body_selector = Selector::parse(selector).unwrap();
-        let body_element = document.select(&body_selector).next();
-        if body_element.is_none() {
-            return Ok("".to_string());
-        }
-        let body_element = body_element.unwrap();
+        // let body_element = document.select(&body_selector).next();
+        // if body_element.is_none() {
+        //     return Ok("".to_string());
+        // }
+        // let body_element = body_element.unwrap();
         let mut text_parts = Vec::new();
-        for element in body_element.select(&body_selector) {
-            text_parts.push(element.text().collect::<Vec<_>>().join(""));
+        for element in document.select(&body_selector) {
+            let text = element.text().collect::<Vec<_>>().join("");
+            if !text.trim().is_empty() {
+                text_parts.push(text);
+            }
         }
         let content = text_parts
             .join(" ")
@@ -110,6 +113,7 @@ pub mod main {
             .to_lowercase();
         // let meta_description = get_meta_description(&document)?;
         // content.push_str(&(String::from(" ") + &meta_description));
+        // println!("selector: {selector}, content: {content}");
         Ok(content)
     }
 
@@ -142,18 +146,15 @@ pub mod main {
                 });
             }
         }
-        let title = get_by_selectors(&document, "head, title")?;
-        let headings = get_by_selectors(
-            &document,
-            "body, h1, h2, h3, h4, h5, h6, [class*='head'], [class*='heading'], [class*='header'], [class*='title'], [id*='head'], [id*='heading'], [id*='header'], [id*='title']",
-        )?;
+        let title = get_by_selectors(&document, "title")?;
+        let headings = get_by_selectors(&document, "h1, h2, h3, h4, h5, h6")?;
         let highlighted = get_by_selectors(
             &document,
-            "body, strong, b, i, em, li, [class*='highlight'], [class*='important'], [class*='bold'], [class*='italic'], [class*='emphasize']",
+            "strong, b, i, em, li, [class*='highlight'], [class*='important'], [class*='bold'], [class*='italic'], [class*='emphasize']",
         )?;
         let content = get_by_selectors(
             &document,
-            "body, div, article, main, section, p, [class*='content'], [class*='main'], [class*='post'], [class*='story'], [class*='body']",
+            "div, article, main, section, p, [class*='content'], [class*='post'], [class*='story']",
         )?;
         let mut index_content = true;
         match url_node {

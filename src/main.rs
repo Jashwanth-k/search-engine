@@ -15,15 +15,9 @@ mod inverted_index;
 mod url_index;
 
 #[derive(Serialize, Deserialize)]
-struct SearchPagesResult {
-    url: String,
-    title: String,
-}
-
-#[derive(Serialize, Deserialize)]
 struct ApiRespSearch {
     msg: String,
-    data: Vec<SearchPagesResult>,
+    data: Vec<inverted_index::ResultScore>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -46,49 +40,23 @@ async fn crawl_index_url(Json(payload): Json<IndexPayload>) -> Json<ApiRespIndex
 }
 #[axum::debug_handler]
 async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRespSearch> {
-    let url_resp = inverted_index::main::get_by_text(&search_text);
-    // let mut heap = BinaryHeap::<(i64, String)>::new();
-    if let None = url_resp {
+    let url_resp = inverted_index::main::get_text_by_scoring(&search_text);
+    if let Err(err) = url_resp {
+        println!("search text error => text: {search_text}, error: {:?}", err);
         let data = ApiRespSearch {
             msg: "No Pages Found!".to_string(),
             data: vec![],
         };
         return Json(data);
     }
-    let urls = url_resp.unwrap();
-    // for (word, count) in urls_map {
-    //     let count = -(count as i64);
-    //     heap.push((count, word));
-    //     if heap.capacity() > top_k {
-    //         heap.pop();
-    //     }
-    // }
-
+    let url_resp = url_resp.unwrap();
     println!(
         "search text resp => text: {search_text}, result: {:?}",
-        urls
+        url_resp
     );
-    // println!("fetched urls {:?}", urls);
-    let data = urls
-        .iter()
-        .map(|url| {
-            let url_data = url_index::main::get_by_url(url);
-            if url_data.is_none() {
-                return SearchPagesResult {
-                    url: url.to_string(),
-                    title: String::new(),
-                };
-            }
-            let url_data = url_data.unwrap();
-            return SearchPagesResult {
-                url: url.to_string(),
-                title: url_data.title,
-            };
-        })
-        .collect();
     return Json(ApiRespSearch {
         msg: "Data Fetched successfully".to_string(),
-        data: data,
+        data: url_resp,
     });
 }
 
@@ -122,7 +90,7 @@ fn init() -> Result<(), Box<dyn Error>> {
         .unwrap();
     let _ = thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_secs(index_save_interval as u64 * 10));
+            thread::sleep(Duration::from_secs(index_save_interval as u64 * 60));
             let _ = url_index::main::write_to_file();
         }
     });
