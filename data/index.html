@@ -417,7 +417,7 @@
             resultElement.className = "result-item";
             const title = getTitleFromUrl(item.url);
             const description =
-              item.meta_content || "No description available for this page.";
+              item.title || "No description available for this page.";
 
             resultElement.innerHTML = `
                 <h3><a href="${item.url}">${title}</a></h3>

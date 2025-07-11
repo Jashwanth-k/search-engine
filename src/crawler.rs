@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::{thread, time::Duration, cmp};
+use std::{cmp, thread, time::Duration};
 
 #[derive(Debug)]
 struct UrlResp {
@@ -43,9 +43,9 @@ pub mod main {
     fn save_fetch_log(url: &str) -> Result<(), Box<dyn Error + Send + Sync>> {
         let filepath = "data/fetch_log.txt";
         let mut file_data = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(filepath)?;
+            .create(true)
+            .append(true)
+            .open(filepath)?;
         let write_content = format!("{}\n", url);
         let _ = file_data.write(write_content.as_bytes());
         Ok(())
@@ -55,7 +55,7 @@ pub mod main {
         println!("started fetching url : {url}");
         let data = client
             .get(url)
-            .timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(10))
             .header("accept", "text/html")
             .header("user-agent", "crawler")
             .send()
@@ -87,26 +87,33 @@ pub mod main {
         Ok(urls)
     }
 
-    fn get_content(document: &Html) -> Result<String, Box<dyn Error + Send + Sync>> {
-        let body_selector = Selector::parse("body, h1, h2, h3, h4, h5, h6, p, li, strong, em, label, input[type='text'], textarea, [aria-label]")
-            .unwrap();
-        let body_element = document.select(&body_selector).next();
-        if body_element.is_none() {
-            return Err("no body element found".into());
-        }
-        let body_element = body_element.unwrap();
+    fn get_by_selectors(
+        document: &Html,
+        selector: &str,
+    ) -> Result<String, Box<dyn Error + Send + Sync>> {
+        // ("body, title, h1, h2, h3, h4, h5, h6, p, strong, b, i, em")
+        let body_selector = Selector::parse(selector).unwrap();
+        // let body_element = document.select(&body_selector).next();
+        // if body_element.is_none() {
+        //     return Ok("".to_string());
+        // }
+        // let body_element = body_element.unwrap();
         let mut text_parts = Vec::new();
-        for element in body_element.select(&body_selector) {
-            text_parts.push(element.text().collect::<Vec<_>>().join(""));
+        for element in document.select(&body_selector) {
+            let text = element.text().collect::<Vec<_>>().join("");
+            if !text.trim().is_empty() {
+                text_parts.push(text);
+            }
         }
-        let mut content = text_parts
-            .join("")
+        let content = text_parts
+            .join(" ")
             .split_whitespace()
             .collect::<Vec<&str>>()
             .join(" ")
             .to_lowercase();
-        let meta_description = get_meta_description(&document)?;
-        content.push_str(&(String::from(" ") + &meta_description));
+        // let meta_description = get_meta_description(&document)?;
+        // content.push_str(&(String::from(" ") + &meta_description));
+        // println!("selector: {selector}, content: {content}");
         Ok(content)
     }
 
@@ -139,8 +146,16 @@ pub mod main {
                 });
             }
         }
-        let content = get_content(&document)?;
-        let meta_description = get_meta_description(&document)?;
+        let title = get_by_selectors(&document, "title")?;
+        let headings = get_by_selectors(&document, "h1, h2, h3, h4, h5, h6")?;
+        let highlighted = get_by_selectors(
+            &document,
+            "strong, b, i, em, li, [class*='highlight'], [class*='important'], [class*='bold'], [class*='italic'], [class*='emphasize']",
+        )?;
+        let content = get_by_selectors(
+            &document,
+            "div, article, main, section, p, [class*='content'], [class*='post'], [class*='story']",
+        )?;
         let mut index_content = true;
         match url_node {
             Some(node) => {
@@ -153,8 +168,14 @@ pub mod main {
             None => (),
         }
         if index_content {
-            url_index::main::insert(url, &content, &meta_description);
-            crate::inverted_index::main::insert_by_content(url, &content);
+            url_index::main::insert(url, &content, &title, &headings, &highlighted);
+            crate::inverted_index::main::insert_by_content(
+                url,
+                &content,
+                &title,
+                &headings,
+                &highlighted,
+            );
         }
         Ok(UrlResp {
             urls: urls,
@@ -202,7 +223,7 @@ pub mod main {
                     urls,
                     is_fetched: _,
                 } = handled_resp.unwrap();
-                let mut idx= 0;
+                let mut idx = 0;
                 for url in urls {
                     while next_results.len() <= idx {
                         next_results.push(Vec::new());
