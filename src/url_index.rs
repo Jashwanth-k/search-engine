@@ -7,7 +7,7 @@ use std::io::Write;
 use std::sync::{Arc, RwLock};
 use std::{env, fs};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Node {
     url: String,
     pub hash: String,
@@ -212,7 +212,7 @@ pub mod main {
         let node = node.as_ref().unwrap();
         if node.url == url {
             return Option::Some(node.clone());
-        } else if *node.url >= *url {
+        } else if *url >= *node.url {
             return get_helper(&node.right, url);
         } else {
             return get_helper(&node.left, url);
