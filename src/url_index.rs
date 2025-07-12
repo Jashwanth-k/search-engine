@@ -4,6 +4,7 @@ use md5;
 use std::error::Error;
 use std::fs::File;
 use std::io::Write;
+use std::io::{BufRead, BufReader};
 use std::sync::{Arc, RwLock};
 use std::{env, fs};
 
@@ -51,9 +52,17 @@ pub mod main {
     use super::*;
     pub fn index() -> Result<(), Box<dyn Error>> {
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
-        let file_data = fs::read_to_string(filepath)?;
-        let file_content: Vec<_> = file_data.lines().map(String::from).collect();
-        for content in file_content {
+        let file_data = File::open(filepath);
+        if file_data.is_err() {
+            println!("err while loading index : {:?}", file_data);
+        }
+        let file_data = file_data.unwrap();
+        let reader = BufReader::new(file_data);
+        for line in reader.lines() {
+            if line.is_err() {
+                println!("buffer read line error : {:?}", line);
+            }
+            let content = line.unwrap();
             let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
             match content_data.len() {
                 5 => (),
@@ -63,6 +72,7 @@ pub mod main {
                 content_data[..5].try_into().unwrap();
             insert(url, content, title, headings, highlighted);
         }
+        println!("=== URL INDEXING FINISHED ===");
         Ok(())
     }
 

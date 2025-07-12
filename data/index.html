@@ -45,6 +45,22 @@
         padding: 15px 20px;
       }
 
+      /* Stats Counter */
+      .stats-counter {
+        color: #5f6368;
+        font-size: 16px;
+        margin-bottom: 15px;
+        transition: all 0.4s ease-in-out;
+      }
+      .stats-counter .stats-number {
+        font-weight: 500;
+        color: #4285f4;
+      }
+      /* Hide the stats counter on the results page */
+      body.results-active .stats-counter {
+        display: none;
+      }
+
       /* --- Logo --- */
       .logo {
         font-size: clamp(3rem, 10vw, 5rem);
@@ -307,6 +323,10 @@
     <div id="page-container">
       <header id="search-header">
         <button id="open-modal-button">Submit Web page</button>
+        <p class="stats-counter">
+          <!-- UPDATED: Added '+' to the number span -->
+          <span class="stats-number">__CRAWLED_COUNT__+</span> Pages Indexed
+        </p>
         <h1 class="logo">Search</h1>
         <div class="search-box">
           <input

@@ -51,7 +51,7 @@ async fn get_pages_by_search_text(Path(search_text): Path<String>) -> Json<ApiRe
     }
     let url_resp = url_resp.unwrap();
     println!(
-        "search text resp => text: {search_text}, result: {:?}",
+        "search text resp => text: {search_text}, result: {:#?}",
         url_resp
     );
     return Json(ApiRespSearch {
@@ -170,6 +170,7 @@ async fn get_homepage() -> Html<String> {
     }
     let file_data = file_data.unwrap();
     let api_base_url = env::var("API_BASE_URL").unwrap_or("http://localhost:8080".to_string());
-    let file_data = file_data.replace("__API_BASE_URL__", &api_base_url);
+    let total_pages_count = url_index::INDEX_CONFIG.read().unwrap().total_count;
+    let file_data = file_data.replace("__API_BASE_URL__", &api_base_url).replace("__CRAWLED_COUNT__", &total_pages_count.to_string());
     Html(file_data)
 }

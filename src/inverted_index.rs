@@ -2,14 +2,17 @@ use crate::url_index;
 use float_ord::FloatOrd;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::cmp;
 use std::collections::BinaryHeap;
 use std::collections::HashMap;
 use std::io::Write;
+use std::io::{BufRead, BufReader};
+use std::thread;
 use std::{
     collections::HashSet,
     sync::{Arc, RwLock},
 };
-use std::{env, error::Error, fs};
+use std::{env, error::Error, fs, fs::File};
 
 pub struct Node {
     text: String,
@@ -33,9 +36,17 @@ pub mod main {
     use super::*;
     pub fn index() -> Result<(), Box<dyn Error>> {
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
-        let file_data = fs::read_to_string(filepath)?;
-        let file_content: Vec<_> = file_data.lines().map(String::from).collect();
-        for content in file_content {
+        let file_data = File::open(filepath);
+        if file_data.is_err() {
+            println!("err while loading index : {:?}", file_data);
+        }
+        let file_data = file_data.unwrap();
+        let reader = BufReader::new(file_data);
+        for line in reader.lines() {
+            if line.is_err() {
+                println!("buffer read line error : {:?}", line);
+            }
+            let content = line.unwrap();
             let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
             match content_data.len() {
                 5 => (),
@@ -46,6 +57,7 @@ pub mod main {
             // println!("{url} == {content} == {title} == {headings} == {highlighted}");
             insert_by_content(url, content, title, headings, highlighted);
         }
+        println!("=== INVERTED INDEXING FINISHED ===");
         Ok(())
     }
 
@@ -106,7 +118,6 @@ pub mod main {
         let whole_content = format!("{} {} {} {}", title, headings, highlighted, content);
         let words_map = whole_content.split_whitespace();
         for word in words_map {
-            // println!("🔥🔥 word : {word} ==== url : {url}");
             insert(word, url);
         }
     }
@@ -177,7 +188,7 @@ pub mod main {
         let n = n as f64;
         let idf = (((n - n_q + 0.5) / (n_q + 0.5)) + 1.0).ln();
         let tf_satur = (f_q_d * (k + 1.0)) / (f_q_d + k * (1.0 - b + b * (d / avdl)));
-        let rank = idf * tf_satur;
+        let rank = cmp::max(FloatOrd(idf), FloatOrd(0.0)).0 * cmp::max(FloatOrd(tf_satur), FloatOrd(0.0)).0;
         rank
     }
 
@@ -197,98 +208,157 @@ pub mod main {
                 occurance_count += 1
             }
         }
-        weight as f64
+        let score = weight as f64
             * get_bm25_score(
                 occurance_count,
                 doc_len,
                 avg_content_len,
                 total_doc_count,
                 total_query_count_doc,
-            )
+            );
+        score
+    }
+
+    fn get_text_by_scoring_helper(
+        text: &str,
+    ) -> Result<Vec<ResultScore>, Box<dyn Error>> {
+        let text = text.to_string().to_lowercase();
+        let combined_map = Arc::new(RwLock::new(HashMap::<String, (String, f64, f64)>::new()));
+        let mut all_handles = Vec::new();
+        for word in text.split_whitespace() {
+            let word = word.to_string();
+            let combined_map = Arc::clone(&combined_map);
+            let mut sub_handles = Vec::new();
+            let root_ref = Arc::clone(&root);
+            let handle = thread::spawn(move || {
+                let root_ref = root_ref.read().unwrap();
+                let word_urls = get_helper(&root_ref, &word);
+                if word_urls.is_none() {
+                    return;
+                }
+                let word_urls = word_urls.unwrap();
+                let word_freq = word_urls.len() as u64;
+                for word_url in word_urls {
+                    let word = word.to_string();
+                    let combined_map = Arc::clone(&combined_map);
+                    let sub_handle = thread::spawn(move || {
+                        let mut combined_map = combined_map.write().unwrap();
+                        let data_node = url_index::main::get_by_url(&word_url);
+                        if data_node.is_none() {
+                            return;
+                        }
+                        let data_node = data_node.unwrap();
+                        let url_index::Node {
+                            title,
+                            headings,
+                            highlighted,
+                            content,
+                            ..
+                        } = data_node;
+                        let curr_index_config = &url_index::INDEX_CONFIG;
+                        let curr_index_config = curr_index_config.read().unwrap();
+                        let url_score = get_score_helper(
+                            8,
+                            &word_url,
+                            &word,
+                            curr_index_config.field_count.url,
+                            curr_index_config.total_count,
+                            word_freq,
+                        );
+                        let title_score = get_score_helper(
+                            6,
+                            &title,
+                            &word,
+                            curr_index_config.field_count.title,
+                            curr_index_config.total_count,
+                            word_freq,
+                        );
+                        let headings_score = get_score_helper(
+                            4,
+                            &headings,
+                            &word,
+                            curr_index_config.field_count.headings,
+                            curr_index_config.total_count,
+                            word_freq,
+                        );
+                        let highlighted_score = get_score_helper(
+                            2,
+                            &highlighted,
+                            &word,
+                            curr_index_config.field_count.highlighted,
+                            curr_index_config.total_count,
+                            word_freq,
+                        );
+                        let content_score = get_score_helper(
+                            1,
+                            &content,
+                            &word,
+                            curr_index_config.field_count.content,
+                            curr_index_config.total_count,
+                            word_freq,
+                        );
+                        let curr_score = url_score + title_score + headings_score + highlighted_score + content_score;
+                        combined_map
+                            .entry(word_url.to_string())
+                            .and_modify(|entry| {
+                                entry.1 += curr_score;
+                                entry.2 += 1.0;
+                            })
+                            .or_insert((title.to_string(), curr_score, 1.0));
+                    });
+                    sub_handles.push(sub_handle);
+                }
+                for handle in sub_handles {
+                    let _ = handle.join();
+                }
+            });
+            all_handles.push(handle);
+        }
+        for handle in all_handles {
+            let _ = handle.join();
+        }
+        let combined_map = Arc::try_unwrap(combined_map).unwrap().into_inner().unwrap();
+        let final_result = combined_map
+            .into_iter()
+            .map(|(url, (title, score, freq))| ResultScore {
+                score: score * freq, // boosting score for pages which has entire search text
+                url: url.to_string(),
+                title: title.to_string(),
+            })
+            .collect::<Vec<ResultScore>>();
+        Ok(final_result)
     }
 
     pub fn get_text_by_scoring(text: &str) -> Result<Vec<ResultScore>, Box<dyn Error>> {
-        let top_k = &env::var("TOP_K")
+        let top_k: u8 = env::var("TOP_K_RESULTS")
             .unwrap_or(String::from("10"))
             .parse::<u8>()
             .unwrap();
-        let text = text.to_string().to_lowercase();
-        let root_ref = root.read().unwrap();
-        let mut combines_map = HashMap::<String, (String, f64)>::new();
-        for word in text.split_whitespace() {
-            let word_urls = get_helper(&root_ref, word);
-            if word_urls.is_none() {
-                continue;
-            }
-            let word_urls = word_urls.unwrap();
-            let word_freq = word_urls.len() as u64;
-            for word_url in word_urls {
-                let data_node = url_index::main::get_by_url(&word_url);
-                if data_node.is_none() {
-                    continue;
-                }
-                let data_node = data_node.unwrap();
-                let url_index::Node {
-                    title,
-                    headings,
-                    highlighted,
-                    content,
-                    ..
-                } = data_node;
-                let curr_index_config = url_index::INDEX_CONFIG.clone();
-                let curr_index_config = curr_index_config.read().unwrap();
-                let curr_score = get_score_helper(
-                    6,
-                    &title,
-                    word,
-                    curr_index_config.field_count.title,
-                    curr_index_config.total_count,
-                    word_freq,
-                ) + get_score_helper(
-                    4,
-                    &headings,
-                    word,
-                    curr_index_config.field_count.headings,
-                    curr_index_config.total_count,
-                    word_freq,
-                ) + get_score_helper(
-                    2,
-                    &highlighted,
-                    word,
-                    curr_index_config.field_count.highlighted,
-                    curr_index_config.total_count,
-                    word_freq,
-                ) + get_score_helper(
-                    1,
-                    &content,
-                    word,
-                    curr_index_config.field_count.content,
-                    curr_index_config.total_count,
-                    word_freq,
-                );
-                combines_map
-                    .entry(word_url.to_string())
-                    .and_modify(|entry| {
-                        entry.1 += curr_score;
-                    })
-                    .or_insert((title.to_string(), curr_score));
-            }
-        }
+        let result = get_text_by_scoring_helper(text)?;
+        let top_results = get_top_k_filterd(result, top_k)?;
+        Ok(top_results)
+    }
 
-        let mut heap = BinaryHeap::<(FloatOrd<f64>, String, String)>::new();
-        for (url, (title, score)) in combines_map {
+    fn get_top_k_filterd(
+        url_results: Vec<ResultScore>,
+        top_k: u8,
+    ) -> Result<Vec<ResultScore>, Box<dyn Error>> {
+        let mut heap = BinaryHeap::new();
+        // println!("raw result 🥺🥺: {:#?}", url_results);
+        for ResultScore { url, title, score } in url_results.iter() {
             heap.push((FloatOrd(-score), url, title));
-            if heap.capacity() as u64 > *top_k as u64 {
+            if heap.len() as u64 > top_k as u64 {
                 heap.pop();
             }
         }
+        // println!("heap 🥺🥺 {top_k} : {:#?}", heap);
         let final_result = heap
             .into_sorted_vec()
             .into_iter()
             .map(|(score, url, title)| ResultScore {
                 score: -score.0,
-                url,
-                title,
+                url: url.to_string(),
+                title: title.to_string(),
             })
             .collect::<Vec<ResultScore>>();
         Ok(final_result)
