@@ -45,6 +45,7 @@ pub mod main {
         for line in reader.lines() {
             if line.is_err() {
                 println!("buffer read line error : {:?}", line);
+                continue;
             }
             let content = line.unwrap();
             let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();

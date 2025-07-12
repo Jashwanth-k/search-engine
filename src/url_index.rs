@@ -61,6 +61,7 @@ pub mod main {
         for line in reader.lines() {
             if line.is_err() {
                 println!("buffer read line error : {:?}", line);
+                continue;
             }
             let content = line.unwrap();
             let content_data = content.split("$$==$$=$$").collect::<Vec<&str>>();
@@ -108,6 +109,8 @@ pub mod main {
         let root_ref = root_clone.read().unwrap();
         let _ = traverse_and_write(&root_ref, &file_data);
         let _ = fs::rename(&temp_filepath, filepath);
+        drop(root_ref);
+        drop(root_clone);
         Ok(())
     }
 
