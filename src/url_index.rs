@@ -106,12 +106,12 @@ pub mod main {
         let filepath = &env::var("URL_INDEX_FILE_PATH")?;
         let temp_filepath = String::from(filepath).replace(".txt", "-temp.txt");
         let file_data = File::create(&temp_filepath)?;
-        let root_clone = root.clone();
-        let root_ref = root_clone.read().unwrap();
+        // let root_clone = root.clone();
+        let root_ref = root.read().unwrap();
         let _ = traverse_and_write(&root_ref, &file_data);
         let _ = fs::rename(&temp_filepath, filepath);
         drop(root_ref);
-        drop(root_clone);
+        // drop(root_clone);
         Ok(())
     }
 
