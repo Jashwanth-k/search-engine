@@ -39,6 +39,7 @@ pub mod main {
         let file_data = File::open(filepath);
         if file_data.is_err() {
             println!("err while loading index : {:?}", file_data);
+            return Ok(());
         }
         let file_data = file_data.unwrap();
         let reader = BufReader::new(file_data);
