@@ -86,14 +86,16 @@ fn init() -> Result<(), Box<dyn Error>> {
     let _ = url_index_thread.join().unwrap();
     let index_save_interval = env::var("INDEX_SAVE_INTERVAL_MIN")
         .unwrap_or(String::from("30"))
-        .parse::<u8>()
+        .parse::<u16>()
         .unwrap();
-    let _ = thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_secs(index_save_interval as u64 * 60));
-            let _ = url_index::main::write_to_file();
-        }
-    });
+    if index_save_interval != 0 {
+        let _ = thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(index_save_interval as u64 * 60));
+                let _ = url_index::main::write_to_file();
+            }
+        });
+    }
     let stop_crawler = env::var("STOP_CRAWLER")
         .unwrap_or("false".to_string())
         .parse::<bool>()
